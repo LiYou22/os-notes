@@ -1,0 +1,29 @@
+\chapter{Process Management}
+\label{ch:proc}
+
+Supplementary reading:
+\begin{itemize}
+  \item \cite{CSAPP} Chapter 7, Sections 8.1--8.5, 10.8, and 10.9.
+  \item \cite{OSTEP} Chapters 4--8.
+  \item \cite{MOS} Sections 2.1, 2.4, and 10.3.
+  \item \cite{OSC} Sections 2.9 and 3.3, and Chapter 5.
+\end{itemize}
+
+This chapter follows the slide deck \emph{2 --- Process Management}. It starts from the user's view of a process and works down into the kernel:
+\begin{itemize}
+  \item \Cref{sec:program}: how a C program is built, and what distinguishes a process from a program;
+  \item \Cref{sec:fork}: creating processes with \code{fork()}, running programs with \code{exec*()}, and waiting with \code{wait()};
+  \item \Cref{sec:kernel}: the \ts{}, file descriptors, and how the kernel handles a system call;
+  \item \Cref{sec:internals}: what \code{fork()}, \code{execve()}, \code{exit()}, and \code{wait()} change inside the kernel, and why zombies exist;
+  \item \Cref{sec:signals}: signals, job control, and signal handlers;
+  \item \Cref{sec:org}: booting, the first process \code{init}, orphans, and the process tree;
+  \item \Cref{sec:sched}: process states, context switching, and scheduling algorithms from FCFS to MLFQ.
+\end{itemize}
+
+\input{chapters/process/01-program-to-process}
+\input{chapters/process/02-fork-exec}
+\input{chapters/process/03-kernel-view}
+\input{chapters/process/04-syscall-internals}
+\input{chapters/process/05-signals}
+\input{chapters/process/06-organization}
+\input{chapters/process/07-scheduling}

@@ -1,0 +1,227 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{osnotes}[2026/10/01 Layout modeled on nm1notes]
+
+% Page and fonts
+\RequirePackage[letterpaper,margin=1in,headheight=26pt]{geometry}
+\RequirePackage[T1]{fontenc}
+\RequirePackage{lmodern}
+\RequirePackage{newtxtext}
+\RequirePackage[varqu,scaled=0.95]{zi4}
+\RequirePackage{microtype}
+
+% Math
+\RequirePackage{amsmath,amssymb,mathtools}
+
+% Tables, lists, graphics
+\RequirePackage{booktabs}
+\RequirePackage{array}
+\RequirePackage{enumitem}
+\setlist[itemize]{label=\textbullet, itemsep=2pt, topsep=4pt}
+\setlist[enumerate]{itemsep=2pt, topsep=4pt}
+\RequirePackage{graphicx}
+\RequirePackage{caption}
+\captionsetup{font=small}
+\RequirePackage{tikz}
+\usetikzlibrary{arrows.meta,calc,positioning,fit,backgrounds,
+  shapes.geometric,shapes.arrows,decorations.pathreplacing}
+
+% Colors and boxes
+\RequirePackage[dvipsnames,table]{xcolor}
+\RequirePackage[most]{tcolorbox}
+
+% Code
+\RequirePackage{listings}
+\lstset{
+  language=C,
+  morekeywords={pid_t,sighandler_t,size_t},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\bfseries,
+  commentstyle=\color{black!60},
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  frame=lines,
+  xleftmargin=1em,
+  xrightmargin=1em,
+  aboveskip=8pt,
+  belowskip=8pt,
+  literate={ó}{{\'o}}1,
+}
+% shell sessions and assembly
+\lstdefinestyle{sh}{language={}, keywordstyle={}}
+
+% Headers and footers
+\RequirePackage{fancyhdr}
+\RequirePackage{datetime2}
+\newcommand{\coursename}{CSCI-GA 2250}
+\newcommand{\footernote}{Operating Systems (Dr.\ Yang Tang), NYU Courant, Fall 2026. Notes by You Li.}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\fancyhead[L]{\small\coursename\quad\parbox[b]{0.56\textwidth}{\raggedright\nouppercase{\rightmark}}}
+\fancyhead[R]{\small\DTMtoday}
+\fancyfoot[L]{\small\footernote}
+\fancyfoot[R]{\small\thepage}
+\renewcommand{\sectionmark}[1]{\markright{\thesection.\ #1}}
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \renewcommand{\headrulewidth}{0pt}%
+  \fancyfoot[C]{\small\thepage}}
+
+% Chapter and section headings
+\RequirePackage{titlesec}
+\titleformat{\chapter}[display]
+  {\normalfont\bfseries}
+  {\huge\chaptertitlename\ \thechapter}
+  {20pt}
+  {\Huge\raggedright}
+\titlespacing*{\chapter}{0pt}{60pt}{30pt}
+\titleformat{\section}{\normalfont\Large\bfseries}{\thesection}{1em}{}
+% Each section starts a new page, so a chapter's opening page holds only its title, reading list, and roadmap
+\newcommand{\sectionbreak}{\clearpage}
+\titleformat{\subsection}{\normalfont\large\bfseries}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}[runin]{\normalfont\normalsize\bfseries}{}{0pt}{}[.]
+
+% Global counter shared by all numbered statements
+\newcounter{stmt}
+\numberwithin{equation}{chapter}
+\numberwithin{figure}{chapter}
+
+\tcbset{
+  nmbox/.style={
+    enhanced,
+    sharp corners, boxrule=0pt, frame hidden,
+    left=8pt, right=8pt, top=6pt, bottom=6pt,
+    before skip=10pt, after skip=10pt,
+    parbox=false,
+  }
+}
+
+% \NMboxed{env}{Name}{background}{title color}
+\newcommand{\NMboxed}[4]{%
+  \newenvironment{#1}[1][]{%
+    \crefalias{stmt}{#1}\refstepcounter{stmt}%
+    \tcolorbox[nmbox, colback=#3]%
+    \setlength{\parindent}{0pt}%
+    {\color{#4}\bfseries #2 \thestmt\ifx\relax##1\relax\else\ (##1)\fi}\par\smallskip
+  }{\endtcolorbox}%
+}
+\definecolor{defbg}{RGB}{255,237,237}
+\definecolor{deftitle}{RGB}{153,0,0}
+\definecolor{thmbg}{RGB}{237,237,255}
+\definecolor{thmtitle}{RGB}{0,0,255}
+
+\NMboxed{definition}{Definition}{defbg}{deftitle}
+\NMboxed{keypoint}{Key Point}{thmbg}{thmtitle}
+
+% Unboxed statements: bold run-in heading
+% \NMplain{env}{Name}{body font}
+\newcommand{\NMplain}[3]{%
+  \newenvironment{#1}[1][]{%
+    \par\medskip\crefalias{stmt}{#1}\refstepcounter{stmt}%
+    \noindent{\bfseries #2 \thestmt}\ifx\relax##1\relax\else\ (##1)\fi{\bfseries.}\ #3%
+  }{\par\medskip}%
+}
+\NMplain{example}{Example}{}
+\NMplain{remark}{Remark}{}
+
+% Cross references
+\RequirePackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\RequirePackage[nameinlink,capitalise,noabbrev]{cleveref}
+\crefname{stmt}{Statement}{Statements}
+\crefname{definition}{Definition}{Definitions}
+\crefname{keypoint}{Key Point}{Key Points}
+\crefname{example}{Example}{Examples}
+\crefname{remark}{Remark}{Remarks}
+
+% Notation
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\ts}{\code{task\_struct}}
+
+% ---------------------------------------------------------------- figures
+% Palette after the lecture slides
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{cmt}{HTML}{6A737D}
+\definecolor{kspace}{HTML}{CFE8FC}
+\definecolor{uspace}{HTML}{DDF3D0}
+\definecolor{tsk}{HTML}{FFF0A8}
+\definecolor{tskedge}{HTML}{C9A800}
+\definecolor{parentc}{HTML}{43A047}
+\definecolor{childc}{HTML}{E0609A}
+\definecolor{kernc}{HTML}{1E88E5}
+\definecolor{zombc}{HTML}{9E9E9E}
+\definecolor{sigc}{HTML}{D32F2F}
+\definecolor{initc}{HTML}{E53935}
+\definecolor{termbg}{HTML}{E8E8E8}
+\definecolor{greybg}{HTML}{F0F0F0}
+
+\tikzset{
+  every picture/.append style={font=\small},
+  box/.style={draw, rounded corners=2pt, fill=white, minimum height=7mm, inner sep=4pt},
+  pill/.style={draw, rounded corners=3.5mm, minimum height=7mm, minimum width=18mm, inner sep=3pt},
+  tool/.style={font=\scriptsize\ttfamily, color=accent},
+  arr/.style={-{Stealth[length=2mm]}, thick},
+  field/.style={draw, fill=tsk, minimum width=27mm, minimum height=5.5mm,
+                inner sep=1pt, font=\scriptsize},
+  seg/.style={draw, minimum width=27mm, minimum height=5.5mm,
+              inner sep=1pt, font=\scriptsize},
+  region/.style={rounded corners=3pt, inner sep=6pt},
+  callout/.style={draw, rounded corners=6pt, fill=white, font=\scriptsize,
+                  align=center, inner sep=3pt},
+  run/.style={line width=2.6pt},
+  blocked/.style={line width=2.6pt, dash pattern=on 3pt off 2.5pt},
+  evt/.style={densely dotted, thin, black!70},
+  sig/.style={-{Stealth[length=2mm]}, thick, sigc},
+  lane/.style={anchor=east, font=\scriptsize},
+  tl/.style={font=\scriptsize},
+  term/.style={draw, fill=termbg, rounded corners=3pt, align=left,
+               font=\scriptsize\ttfamily, inner sep=5pt},
+}
+
+% \fieldstack[style]{prefix}{anchor point}{label1,label2,...}: a column of
+% fields named prefix-1, prefix-2, ... hanging below the given point.
+\newcommand{\fieldstack}[4][field]{%
+  \foreach \lab [count=\i, remember=\i as \j (initially 0)] in {#4} {%
+    \ifnum\i=1
+      \node[#1, anchor=north] (#2-\i) at (#3) {\lab};
+    \else
+      \node[#1, anchor=north] (#2-\i) at (#2-\j.south) {\lab};
+    \fi
+  }%
+}
+
+% \timeaxis{length}{height}: time axis at y = 0 and a vertical baseline
+\newcommand{\timeaxis}[2]{%
+  \draw[-{Stealth[length=2mm]}] (0,0) -- (#1,0) node[below left, font=\scriptsize\itshape] {Time};
+  \draw (0,0) -- (0,#2);
+}
+
+% Gantt charts for scheduling examples, after the slides' job colors.
+% Use inside a tikzpicture whose x unit is one time unit.
+\definecolor{jobA}{HTML}{F8A5A0}
+\definecolor{jobB}{HTML}{FFE36E}
+\definecolor{jobC}{HTML}{A8DC7A}
+
+% \ganttrow{y}{row label}{start/end/job,...}; a slot too narrow for its
+% letter is labeled above the bar instead
+\newcommand{\ganttrow}[3]{%
+  \node[anchor=east, font=\scriptsize] at ($(0,#1)+(-1.5mm,0)$) {#2};
+  \foreach \s/\e/\j in {#3} {%
+    \draw[fill=job\j] ($(\s,#1)+(0,-2.2mm)$) rectangle ($(\e,#1)+(0,2.2mm)$);
+    \pgfmathtruncatemacro{\w}{\e-\s}%
+    \ifnum\w>4
+      \node[font=\scriptsize] at ($({(\s+\e)/2},#1)$) {\j};
+    \else
+      \node[font=\tiny, above] at ($({(\s+\e)/2},#1)+(0,2.2mm)$) {\j};
+    \fi
+  }%
+}
+
+% \ganttaxis{y}{t1,t2,...}: tick labels below a row
+\newcommand{\ganttaxis}[2]{%
+  \foreach \t in {#2} {%
+    \draw ($(\t,#1)+(0,-2.2mm)$) -- ++(0,-0.8mm) node[below, font=\tiny, inner sep=1pt] {\t};
+  }%
+}
+
+\endinput

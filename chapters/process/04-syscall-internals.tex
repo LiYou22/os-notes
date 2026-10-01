@@ -1,0 +1,234 @@
+\section{Process-Management System Calls in the Kernel}
+\label{sec:internals}
+
+\Cref{sec:kernel} described how a system call is handled in general. This section takes \code{fork()}, \code{execve()}, \code{exit()}, and \code{wait()} one at a time and asks which kernel data structures each of them changes. At that level, phenomena such as zombie processes are no longer mysterious.
+
+\subsection{\texorpdfstring{\code{fork()}}{fork()}}
+
+From the programmer's perspective, \code{fork()} is invoked once and returns in both the parent and the child. In the kernel it does three things.
+\begin{enumerate}
+  \item \emph{Duplicate the \ts{}} and update the copy: allocate a new PID (2436 $\to$ 2437), reset the running time to $0$, point the child's \emph{Parent} field at the parent, and add the child to the parent's \emph{list of children}.
+  \item \emph{Duplicate the user-space memory}: text, initialized data, uninitialized data, heap, mapped files, and stack. This is done copy-on-write: both processes first share the same physical pages, marked read-only, and a write triggers a page fault in which the kernel copies just that page.
+  \item \emph{Set two return values}: the child's PID (2437) in the parent's saved context and $0$ in the child's.
+\end{enumerate}
+The third step is how ``one call returns twice'' is implemented: two processes each return once, with different values (\Cref{fig:fork-kernel}).
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[font=\small\bfseries] (t1) at (0,0) {Process 2436};
+  \node[font=\scriptsize\itshape, below=0pt of t1] (s1) {struct task\_struct =};
+  \fieldstack{a}{s1.south}{PID = 2436, Running time, File descriptors, List of children}
+  \node[font=\small\bfseries, color=sigc] (t2) at (4.6,0) {Process 2437};
+  \node[font=\scriptsize\itshape, below=0pt of t2] (s2) {struct task\_struct =};
+  \fieldstack{b}{s2.south}{PID = 2437, Running time = 0, File descriptors, Parent}
+  \begin{scope}[on background layer]
+    \node[fit=(t1)(a-4), fill=tsk!70, draw=tskedge, rounded corners=2pt, inner sep=4pt] (A) {};
+    \node[fit=(t2)(b-4), fill=tsk!70, draw=tskedge, rounded corners=2pt, inner sep=4pt] (B) {};
+  \end{scope}
+  \node[box, fill=tsk!70] (p101) at (8.4,0) {Process 101};
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}, thick, tskedge] (A.east |- t1) -- (B.west |- t1);
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}, thick, tskedge] (B.east |- t1) -- (p101);
+  \draw[arr] (a-4.east) to[out=-10, in=190] (b-4.west);
+  \draw[arr] (b-4.north west) to[out=150, in=10] (a-3.east);
+  \node[below=1mm of A, font=\scriptsize, color=sigc] {Return value = 2437};
+  \node[below=1mm of B, font=\scriptsize, color=sigc] {Return value = 0};
+  \begin{scope}[on background layer]
+    \node[fit=(A)(B)(p101), fill=kspace, region, inner sep=12pt, yshift=-3pt] (K) {};
+  \end{scope}
+  \node[anchor=south east, font=\small\itshape] at (K.south east) {Kernel-space memory};
+\end{tikzpicture}
+
+\vspace{4mm}
+\begin{tikzpicture}
+  \foreach \x/\nm/\ttl in {0/l/Process 2436, 6.2/r/Process 2437} {
+    \node[font=\scriptsize] (\nm t) at (\x,0) {\ttl};
+    \fieldstack[seg, fill=tsk]{\nm}{\nm t.south}{Text, Initialized data, Uninitialized data, Heap, {}, Mapped files, {}, Stack}
+  }
+  \draw[arr, sigc] ($(l-4.east)+(4mm,0)$) -- node[above]{Copy-on-write} ($(r-4.west)+(-4mm,0)$);
+  \begin{scope}[on background layer]
+    \node[fit={(lt)(l-8)(rt)(r-8)($(r-8.south)+(0,-0.45)$)}, fill=uspace, region, inner sep=10pt] (U) {};
+  \end{scope}
+  \node[anchor=south east, font=\small\itshape] at (U.south east) {User-space memory};
+\end{tikzpicture}
+\caption{\code{fork()} in the kernel (after slides 49--50). Top: a new \ts{} is linked into the task list, with Parent and children pointers and two different return values. Bottom: the address space is duplicated copy-on-write.}
+\label{fig:fork-kernel}
+\end{figure}
+
+\begin{example}[Parent and Child Writing the Same File]
+\label{ex:shared-file}
+\begin{lstlisting}
+int main() {
+  FILE *fp = fopen("file.txt", "w");
+  pid_t pid = fork();
+  for (int i = 0; i < 5; ++i) {
+    fprintf(fp, "[%d] %d\n", getpid(), i);
+    fflush(fp);
+    sleep(rand() % 2);
+  }
+  fclose(fp);
+  if (pid) wait(NULL);
+}
+\end{lstlisting}
+  The lines of the two processes \emph{interleave} in \code{file.txt} (\code{[2436] 0}, \code{[2437] 0}, \code{[2436] 1}, \dots) but never overwrite each other. Both descriptors point to the same kernel open-file entry, so they share the file offset: each write advances it for the other process too. The order of interleaving depends on scheduling.
+\end{example}
+
+\subsection{\texorpdfstring{\code{execve()}}{execve()}}
+
+From the programmer's perspective, \code{execve()} never returns (on success). In the kernel:
+\begin{itemize}
+  \item the \ts{} is mostly kept---PID, relationships, file descriptors, and running time remain;
+  \item the user-space memory is reset, and the code of the new program is loaded into the text segment;
+  \item the CPU registers, including the program counter, are reset to the entry point of the new program.
+\end{itemize}
+Since the program counter now points into the new program, the old code never runs again: this is the implementation-level reason why \code{execve()} does not return (\Cref{fig:execve}).
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[font=\scriptsize] (t) at (0,0) {Process 2436};
+  \fieldstack[seg, fill=childc!35]{m}{t.south}{Text, Initialized data, Uninitialized data, Heap, {}, Mapped files, {}, Stack}
+  \node[seg, fill=childc!70, minimum width=27mm] at (m-1) {Text};
+  \node[callout, anchor=west] (c1) at (3.0,-0.3) {The kernel loads the code\\of the new program.};
+  \node[callout, anchor=west] (c2) at (3.0,-3.9) {The kernel resets\\the memory.};
+  \node[callout, anchor=west, fill=initc!15] (c3) at (7.2,-1.4) {CPU registers (e.g., the\\program counter) are also reset.};
+  \draw[thin] (c1.west) -- (m-1.east);
+  \draw[thin] (c2.west) -- (m-7.east);
+  \begin{scope}[on background layer]
+    \node[fit=(t)(m-8)(c1)(c3), fill=uspace, region, inner sep=10pt] (U) {};
+  \end{scope}
+  \node[anchor=south east, font=\small\itshape] at (U.south east) {User-space memory};
+\end{tikzpicture}
+\caption{\code{execve()} keeps the process but rebuilds its user-space memory (after slide 55).}
+\label{fig:execve}
+\end{figure}
+
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+   & \ts{} & user-space memory \\
+  \midrule
+  \code{fork()} & create a new one & duplicate (copy-on-write) \\
+  \code{execve()} & keep & reset and load the new program \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{\texorpdfstring{\code{exit()}}{exit()}}
+
+To understand \code{wait()}, we first look at \code{exit()}, which is called automatically when a program reaches its end. The kernel
+\begin{enumerate}
+  \item cleans up most of the kernel-space memory allocated to the process and all of its user-space memory;
+  \item closes all open files;
+  \item but keeps the PID and the \ts{};
+  \item sends the \code{SIGCHLD} signal to the parent, and \code{exit()} returns.
+\end{enumerate}
+
+\begin{definition}[Zombie]
+  A process that has exited but whose PID and \ts{} have not yet been released is a \emph{zombie}. It no longer runs and its storage is minimal, but it is still in the system.
+\end{definition}
+
+Why can the kernel not remove the \ts{} right away? Because the parent may still want to know \emph{how} the child died: its exit code, or whether it was killed by a signal. That information lives in the \ts{}, and the kernel cannot decide on the parent's behalf that it does not care.
+
+\begin{keypoint}
+  A zombie is a death certificate waiting to be collected by the parent.
+\end{keypoint}
+
+\subsection{\texorpdfstring{\code{wait()}}{wait()} and \texorpdfstring{\code{waitpid()}}{waitpid()}}
+
+Parent and child run concurrently, so the moment the parent calls \code{wait()} is independent of the moment the child exits. By default a process \emph{ignores} \code{SIGCHLD} unless it calls \code{wait()} or \code{waitpid()}. Two cases arise (\Cref{fig:wait-cases}).
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \timeaxis{5.2}{2.9}
+  \node[lane, parentc] at (-0.1,2.3) {Parent};
+  \node[lane, childc] at (-0.1,1.45) {Child};
+  \node[lane, kernc] at (-0.1,1.05) {Kernel};
+  \draw[run, parentc] (0,2.3) -- (0.8,2.3);
+  \draw[blocked, parentc] (0.8,2.3) -- (2.6,2.3);
+  \draw[run, parentc] (2.6,2.3) -- (4.8,2.3);
+  \draw[run, childc] (0,1.45) -- (1.4,1.45);
+  \draw[run, kernc] (1.4,1.05) -- (2.6,1.05);
+  \draw[sig] (2.6,1.05) -- node[right, tl, sigc]{\code{SIGCHLD}} (2.6,2.2);
+  \draw[evt] (0.8,2.3) -- (0.8,2.75) node[above, tl]{\code{wait()} invoked};
+  \draw[evt] (1.4,1.05) -- (1.4,0.45) node[below right=-1mm, tl]{\code{exit()} invoked};
+  \node[tl, color=cmt] at (3.9,0.6) {no zombie};
+\end{tikzpicture}\hspace{6mm}%
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \timeaxis{5.6}{2.9}
+  \node[lane, parentc] at (-0.1,2.3) {Parent};
+  \node[lane, childc] at (-0.1,1.45) {Child};
+  \node[lane, kernc] at (-0.1,1.05) {Kernel};
+  \draw[run, parentc] (0,2.3) -- (3.8,2.3);
+  \draw[run, parentc] (4.0,2.3) -- (5.2,2.3);
+  \draw[run, childc] (0,1.45) -- (1.2,1.45);
+  \draw[run, kernc] (1.2,1.05) -- (2.4,1.05);
+  \draw[run, zombc] (2.4,1.45) -- (3.8,1.45) node[midway, above, tl, color=black]{zombie};
+  \draw[run, kernc] (3.8,1.05) -- (4.0,1.05);
+  \draw[sig] (1.9,1.05) -- node[left, tl, sigc, pos=0.8]{\code{SIGCHLD}} (1.9,2.2);
+  \draw[evt] (3.9,2.3) -- (3.9,2.75) node[above, tl]{\code{wait()} invoked};
+  \draw[evt] (1.2,1.05) -- (1.2,0.45) node[below, tl]{\code{exit()} invoked};
+  \draw[evt] (2.4,1.05) -- (2.4,0.75) node[below right=-1mm, tl]{\code{exit()} returns};
+\end{tikzpicture}
+\caption{Left: \code{wait()} before \code{SIGCHLD} arrives (after slide 71). Right: \code{wait()} after \code{SIGCHLD} arrives; the zombie lives until the parent calls \code{wait()} (after slide 75).}
+\label{fig:wait-cases}
+\end{figure}
+
+\subsubsection{Case 1: \texorpdfstring{\code{wait()}}{wait()} Before \texorpdfstring{\code{SIGCHLD}}{SIGCHLD} Arrives}
+
+\begin{enumerate}
+  \item The kernel sets a \code{SIGCHLD} signal handler for the process, a function pointer stored in its \ts{}, to run when the signal arrives.
+  \item The kernel puts the process in the \emph{blocked} (a.k.a.\ sleeping) state, in which it does not use the CPU.
+  \item When \code{SIGCHLD} arrives, the parent's signal handler is invoked---not the original program code.
+  \item The handler removes the signal and destroys the zombie child, releasing its PID and \ts{}.
+  \item The handler is removed, the process goes back to ignoring \code{SIGCHLD}, and it returns to user space where it left off.
+\end{enumerate}
+From the user code's point of view, ``\code{wait()} returned''. In this case no zombie wanders around in the system: the child is reaped the instant it becomes one.
+
+\subsubsection{Case 2: \texorpdfstring{\code{wait()}}{wait()} After \texorpdfstring{\code{SIGCHLD}}{SIGCHLD} Arrives}
+
+The child has already exited, \code{SIGCHLD} has been delivered and is \emph{pending}, and a zombie exists. When the parent finally calls \code{wait()} and sets the handler, it finds the signal already there, removes it, and reaps the zombie immediately, without blocking. In this case a zombie does exist, but only up to the moment the parent calls \code{wait()}.
+
+\subsection{Zombies}
+
+\code{wait()} and \code{waitpid()} exist to \emph{reap} zombie children. Linux marks zombies as \code{<defunct>}, with state \code{Z}:
+\begin{lstlisting}[style=sh]
+$ ps x
+  PID TTY      STAT   TIME COMMAND
+ 2436 pts/0    SN+    0:00 ./zombie
+ 2437 pts/0    ZN+    0:00 [zombie] <defunct>
+\end{lstlisting}
+After the parent calls \code{wait()}, process 2437 disappears from the list.
+
+Reaping is a matter of system resource management: each zombie holds a PID, and the PID space is finite (\code{cat /proc/sys/kernel/pid\_max} prints, e.g., 65536).
+
+\begin{example}[Running Out of PIDs]
+\begin{lstlisting}
+int main() { while (fork()); }
+\end{lstlisting}
+  The parent forks forever, and every child exits at once and becomes a zombie that nobody reaps. The PIDs are soon exhausted, after which the system cannot create any new process---not even \code{ls} or \code{poweroff}, since each of them must be forked too.
+\end{example}
+
+\begin{keypoint}
+  Never leave zombies in the system.
+\end{keypoint}
+
+\begin{keypoint}[Summary]
+  It is important to know the internal workings of system calls. Some of them have surprising results---\code{fork()} returns twice, \code{execve()} never returns, an exited process stays around---and understanding them clarifies process control in the OS. At the very least, you no longer have to guess what happens after calling a system call.
+\end{keypoint}
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:internals-further}
+
+\paragraph{Zombies vs.\ orphans.} The two are easily confused. A \emph{zombie} is a child that died before its parent reaped it; it leaks a PID. An \emph{orphan} is a child whose parent died first; it is adopted by PID 1, which keeps calling \code{wait()}, so orphans are eventually reaped (\Cref{sec:org}). Orphans are harmless; zombies are leaks.
+
+\paragraph{\code{SIGKILL} cannot kill a zombie.} A zombie is already dead and runs no code, so signals mean nothing to it. There are only two ways to remove it: make the parent call \code{wait()}, or kill the parent, after which the zombie is reparented to PID 1 and reaped.
+
+\paragraph{Install a \code{SIGCHLD} handler.} A long-running server cannot block in \code{wait()}. The usual pattern is to loop \code{waitpid(-1, NULL, WNOHANG)} inside a \code{SIGCHLD} handler until it returns $0$; the loop is required because several signals may be merged into one. A simpler alternative is \code{signal(SIGCHLD, SIG\_IGN)}, which tells the kernel that the parent does not want exit statuses, so the kernel reaps children itself and no zombies arise.
+
+\paragraph{Decoding the status.} The \code{status} filled in by \code{wait(\&status)} is encoded. \code{WIFEXITED(status)} tests for a normal exit and \code{WEXITSTATUS(status)} extracts the exit code; \code{WIFSIGNALED(status)} tests for death by a signal and \code{WTERMSIG(status)} extracts the signal. Comparing \code{status} with $0$ directly is wrong.
+
+\paragraph{Defending against fork bombs.} Linux limits the number of processes per user with \code{RLIMIT\_NPROC} (\code{ulimit -u}), and systemd can set \code{TasksMax} through cgroups. A fork bomb then usually takes down one user rather than the whole machine---still fatal for that user.
+
+\paragraph{Why \code{wait()} goes through a signal.} The kernel could simply inspect the child's state. Routing the event through \code{SIGCHLD} unifies the two cases above into one question, ``is there a pending signal?''. Expressing asynchronous events as signals is a consistent theme in Unix.

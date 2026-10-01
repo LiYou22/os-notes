@@ -1,0 +1,24 @@
+\chapter{System Call Reference}
+\label{app:syscalls}
+
+The process-management calls used in these notes, with the section where each is discussed.
+
+\begin{center}
+\small
+\begin{tabular}{>{\ttfamily}l p{0.5\linewidth} l}
+  \toprule
+  \normalfont Call & What it does & See \\
+  \midrule
+  getpid(), getppid() & PID of the caller, PID of its parent & \Cref{sec:fork} \\
+  fork() & clone the caller; returns the child's PID in the parent, $0$ in the child, $-1$ on failure; memory is shared copy-on-write & \Cref{sec:fork,sec:internals} \\
+  execve(), exec*() & replace the program the process runs; does not return on success; keeps the PID and the fd table & \Cref{sec:fork,sec:internals} \\
+  exit() & free memory, close files, leave a zombie, send \code{SIGCHLD} to the parent & \Cref{sec:internals} \\
+  wait(), waitpid() & block until a child terminates and reap it; $-1$ if there are no children & \Cref{sec:fork,sec:internals} \\
+  dup2(old, new) & make descriptor \code{new} refer to the open file of \code{old}; the basis of redirection & \Cref{sec:kernel} \\
+  kill(pid, sig) & send a signal to a process; \code{raise(sig)} sends it to the caller & \Cref{sec:signals} \\
+  signal(sig, h) & install a handler and return the old one; not possible for \code{SIGKILL} and \code{SIGSTOP} & \Cref{sec:signals} \\
+  pause() & block until a handled or terminating signal arrives & \Cref{sec:signals} \\
+  alarm(n), setitimer() & one-time or periodic timer delivering \code{SIGALRM} & \Cref{sec:signals} \\
+  \bottomrule
+\end{tabular}
+\end{center}

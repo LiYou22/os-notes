@@ -1,0 +1,162 @@
+\section{From Program to Process}
+\label{sec:program}
+
+\subsection{A Program Is Not a Process}
+
+``What is a program?'' is less obvious than it looks. A program is a piece of code---but \emph{which} code? Any of the following layers can be called ``the program'':
+\begin{itemize}
+  \item high-level languages: C, C++, Java, \dots;
+  \item intermediate languages: Java bytecode, LLVM IR, .NET CIL, \dots;
+  \item low-level languages: assembly;
+  \item machine code.
+\end{itemize}
+A process is something else, and separating the two is the starting point of this unit: a program is static text, while a process is a dynamic, stateful entity.
+
+\begin{definition}[Process]
+  A \emph{process} is an abstraction of a running program. It owns
+  \begin{itemize}
+    \item all the memory allocated to it,
+    \item all the files it has opened, and
+    \item accounting information: owner, running time, memory usage, \dots
+  \end{itemize}
+\end{definition}
+
+So a process is not just ``code that is running''; it is the full context the kernel uses to manage that running instance. In Linux that context is a structure called \ts{} (\Cref{sec:kernel}). The process is the most central concept in an operating system. Before studying it, we follow a C source file all the way to something that can be executed.
+
+\subsection{Life of a C Program}
+
+The build pipeline has four stages, each with its own tool (\Cref{fig:pipeline}). \code{gcc hello.c -o hello} runs all four at once, but each can be run separately.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=12mm]
+  \node[box] (c) {\code{hello.c}};
+  \node[box, right=of c] (i) {expanded code};
+  \node[box, right=of i] (s) {\code{hello.s}};
+  \node[box, right=of s] (o) {\code{hello.o}};
+  \node[box, right=of o, fill=kspace] (e) {\code{hello}};
+  \draw[arr] (c) -- node[above, tool]{cpp} (i);
+  \draw[arr] (i) -- node[above, tool]{gcc} (s);
+  \draw[arr] (s) -- node[above, tool]{as} (o);
+  \draw[arr] (o) -- node[above, tool]{ld} (e);
+  \node[box, below=9mm of $(o)!0.5!(e)$, font=\scriptsize] (lib) {\code{lib*.a} / \code{lib*.so}};
+  \draw[arr] (lib) -- ($(o)!0.5!(e)$);
+  \foreach \n/\t in {c/source, s/assembly, o/object file, e/executable}
+    \node[below=0.5mm of \n, font=\scriptsize, color=cmt] {\t};
+\end{tikzpicture}
+\caption{The build pipeline: preprocessor, compiler, assembler, linker (after slide 3).}
+\label{fig:pipeline}
+\end{figure}
+
+\subsubsection{The Preprocessor}
+
+The preprocessor (\code{cpp}) expands \emph{directives} such as \code{\#include}, \code{\#define}, and \code{\#ifdef}. It performs pure text substitution and knows nothing about C semantics. \code{gcc -E main.c} runs only this stage: \code{\#include "header.h"} is replaced by the whole header, and a macro call like \code{MAX(1, 2)} is expanded in place to \code{((1) > (2) ? (1) : (2))}. Because expansion is textual, macro parameters must be parenthesized everywhere.
+
+\subsubsection{The Compiler}
+
+The compiler takes the expanded C code, checks the syntax, and emits assembly (\code{gcc}) or LLVM IR (\code{clang}). It also optimizes the code, sometimes dramatically.
+
+\begin{example}[Optimization Can Erase a Function]
+  Consider
+\begin{lstlisting}
+int main() {
+  int x = 1;
+  x = x - 1;
+  return x;
+}
+\end{lstlisting}
+  \noindent
+  \begin{minipage}[t]{0.47\linewidth}
+  \centering\small\code{gcc -S}
+\begin{lstlisting}[style=sh]
+pushq   %rbp
+movq    %rsp, %rbp
+movl    $1, -4(%rbp)
+subl    $1, -4(%rbp)
+movl    -4(%rbp), %eax
+popq    %rbp
+ret
+\end{lstlisting}
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.47\linewidth}
+  \centering\small\code{gcc -S -O2}
+\begin{lstlisting}[style=sh]
+xorl    %eax, %eax
+ret
+\end{lstlisting}
+  \end{minipage}
+
+  Without optimization, the compiler faithfully pushes, stores, subtracts, reloads, pops, and returns. With \code{-O2} it sees that the function always returns $0$ and emits two instructions.
+\end{example}
+
+\begin{keypoint}
+  The code you write and the instructions the CPU executes need not correspond. Shifted line numbers and ``optimized out'' variables when debugging optimized code both come from this.
+\end{keypoint}
+
+\subsubsection{The Assembler}
+
+The assembler (\code{as}) converts assembly into an \emph{object file}. The object file already contains machine code, but it is \emph{not yet executable}: it still has unresolved symbols. Where \code{printf} lives, for instance, is not known yet.
+
+\subsubsection{The Linker}
+
+The linker (\code{ld}) combines object files and libraries into the final executable.
+
+\begin{definition}[Library]
+  A \emph{library} is a collection of functions and variables. It comes in two forms:
+  \begin{center}
+  \begin{tabular}{llll}
+    \toprule
+     & a.k.a. & Created with & Extension \\
+    \midrule
+    static library & archive & \code{ar -rcs} & \code{.a} \\
+    dynamic library & shared object & \code{gcc -shared} & \code{.so} / \code{.dylib} / \code{.dll} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+  The three dynamic-library extensions are those of Linux, macOS, and Windows.
+\end{definition}
+
+\subsection{Static and Dynamic Linking}
+
+The two kinds of library correspond to two ways of linking, which differ in \emph{where the library code ends up} (\Cref{fig:linking}).
+\begin{itemize}
+  \item \emph{Static linking.} The final program embeds every library function it uses. It is self-contained and needs no external files at run time; the cost is a larger binary, and a library upgrade requires relinking.
+  \item \emph{Dynamic linking.} The final program only records ``I need library X''. The OS maps the library in when the program runs. Many programs share one copy, saving memory and disk, and a library bug fix benefits all of them at once.
+\end{itemize}
+\code{ldd /bin/python3} lists the dynamic libraries a program depends on.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    file/.style={draw, minimum width=10mm, minimum height=10mm, font=\scriptsize\ttfamily, inner sep=1pt},
+    linker/.style={draw, ellipse, fill=uspace, minimum width=18mm, minimum height=9mm}]
+  \node[file, fill=kspace] (o1) at (0,0.65) {hello.o};
+  \node[file, fill=kspace!40] (a) at (0,-0.65) {lib*.a};
+  \node[linker] (l1) at (2.3,0) {Linker};
+  \node[file, fill=childc!40, minimum height=19mm, minimum width=12mm] (h1) at (4.5,0) {hello};
+  \draw[arr] (o1) -- (l1); \draw[arr] (a) -- (l1); \draw[arr] (l1) -- (h1);
+  \node[anchor=west, align=left] at (5.3,0)
+    {\textbf{Static linking}\\The final program embeds all library functions used.};
+  \draw[dashed, cmt] (-0.8,-1.45) -- (13.2,-1.45);
+  \node[file, fill=kspace] (o2) at (0,-2.25) {hello.o};
+  \node[file, fill=kspace!40] (so) at (0,-3.55) {lib*.so};
+  \node[linker] (l2) at (2.3,-2.9) {Linker};
+  \node[file, fill=childc!40] (h2) at (4.5,-2.9) {hello};
+  \draw[arr] (o2) -- (l2); \draw[arr] (so) -- (l2); \draw[arr] (l2) -- (h2);
+  \node[anchor=west, align=left] at (5.3,-2.9)
+    {\textbf{Dynamic linking}\\The final program does not embed library functions;\\the OS loads dynamic libraries when the program runs.};
+\end{tikzpicture}
+\caption{Static vs.\ dynamic linking (after slide 11).}
+\label{fig:linking}
+\end{figure}
+
+The rest of the unit first studies the system calls a programmer uses to manage processes (create, execute, wait, signal) and then turns to the kernel to see what each one does inside.
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:program-further}
+
+\paragraph{Why an object file cannot run yet.} Call instructions in a \code{.o} file hold placeholder addresses. A \emph{relocation table} lists the spots that need real addresses, and a \emph{symbol table} lists the symbols the file defines and references. The linker resolves symbols across all object files and then patches the addresses. \code{undefined reference to 'foo'} is a symbol-resolution failure, not a compile error: it appears in the last stage of the pipeline.
+
+\paragraph{The price of dynamic linking.} Addresses of library functions are known only at run time, so calls go through an indirect jump (the PLT and GOT). This costs a little at run time and brings ``DLL hell'': a program fails to start when the library version on the target machine does not match. Go links statically by default and Rust leans static, trading binary size for deployment determinism.
+
+\paragraph{\code{gcc} is a driver.} \code{gcc} does not compile anything itself. It invokes \code{cpp}, \code{cc1} (the actual compiler), \code{as}, and \code{ld} as needed; \code{gcc -v hello.c} prints the commands it dispatches, which helps locate the stage that fails.

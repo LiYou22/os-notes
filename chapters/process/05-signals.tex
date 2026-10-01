@@ -1,0 +1,211 @@
+\section{Signals}
+\label{sec:signals}
+
+\subsection{Signals Are Software Interrupts}
+
+\begin{definition}[Signal]
+  A \emph{signal} is a form of inter-process communication (IPC): a process can send a signal to another process. When a signal arrives, the OS interrupts the normal control flow of the target process and runs a \emph{signal handler} instead.
+\end{definition}
+
+Interrupting the normal flow to run other code and then coming back is exactly what a hardware interrupt does, so signals are also called \emph{software interrupts}. The most familiar example is pressing Ctrl-C:
+\begin{enumerate}
+  \item it sends the \code{SIGINT} signal to the current process;
+  \item the \emph{default handler} of \code{SIGINT} terminates the process;
+  \item but the process may \emph{supply its own handler} to override this behavior.
+\end{enumerate}
+The third point matters: Ctrl-C is not a forced kill. It only delivers a signal, and the program may choose not to die.
+
+\subsection{How Signals Are Generated}
+
+From user space:
+\begin{itemize}
+  \item the keyboard: Ctrl-C sends \code{SIGINT}, Ctrl-Z sends \code{SIGTSTP} (terminal stop), and Ctrl-\textbackslash{} sends \code{SIGQUIT};
+  \item commands such as \code{kill} and \code{top};
+  \item the \code{kill()} system call.
+\end{itemize}
+From the kernel or the hardware:
+\begin{itemize}
+  \item \code{SIGCHLD} (a child stopped or terminated) comes from the kernel;
+  \item \code{SIGFPE} (floating-point exception, e.g.\ division by zero) comes from the CPU;
+  \item \code{SIGSEGV} (invalid memory reference) is sent by the CPU to the kernel, and by the kernel to the process.
+\end{itemize}
+
+\begin{remark}
+  The full chain of a segmentation fault: the CPU detects an illegal access during address translation, raises a hardware exception, the kernel takes over and turns it into a \code{SIGSEGV} for the offending process, and the default handler terminates the process and dumps core. A ``segmentation fault'' is, in the end, a signal.
+\end{remark}
+
+\subsection{The \texorpdfstring{\code{kill}}{kill} Command and Job Control}
+
+The \code{kill} command sends \code{SIGTERM} to the target process by default, and the default handler of \code{SIGTERM} terminates it:
+\begin{lstlisting}[style=sh]
+$ ps -u $USER
+  PID TTY          TIME CMD
+ 2250 pts/10   00:00:00 loop
+$ kill 2250
+\end{lstlisting}
+The terminal running the process then shows \code{Terminated}. But \code{kill} can send \emph{any} signal; the name is misleading, as it does not ``kill'', it ``signals''.
+\begin{lstlisting}[style=sh]
+$ kill -TSTP 2250      # stopped: the shell prints [1]+ Stopped
+$ kill -CONT 2250      # resumed: its output mixes with the shell prompt
+\end{lstlisting}
+After \code{SIGCONT}, the program's output interleaves with the shell prompt. Explaining why leads to job control.
+
+\begin{definition}[Foreground and Background Jobs]
+  A \emph{foreground job} is a child that the shell is waiting for: the shell calls \code{fork()} and \code{exec()} and then blocks in \code{waitpid()}, so it does not respond to the user meanwhile. A \emph{background job} is a child that runs concurrently with the shell while the shell is not waiting for it.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \timeaxis{5.4}{2.3}
+  \node[lane, parentc] at (-0.1,1.5) {Parent: shell};
+  \node[lane, childc] at (-0.1,0.8) {Child: \code{./loop}};
+  \draw[run, parentc] (0,1.5) -- (0.8,1.5);
+  \draw[blocked, parentc] (0.8,1.5) -- (1.8,1.5);
+  \draw[run, parentc] (1.8,1.5) -- (5,1.5);
+  \draw[run, childc] (0.8,0.8) -- (1.8,0.8);
+  \draw[blocked, childc!60] (1.8,0.8) -- (3.4,0.8);
+  \draw[run, childc] (3.4,0.8) -- (5,0.8);
+  \draw[evt] (0.8,1.5) -- (0.8,2.1) node[anchor=south east, tl, xshift=-0.5mm]{\code{fork()}, \code{exec()}, \code{waitpid()}};
+  \draw[evt] (1.8,1.5) -- (1.8,2.1) node[anchor=south west, tl, xshift=0.5mm]{\code{waitpid()} returns};
+  \draw[sig] (1.8,0.25) node[below, tl, sigc]{\code{SIGTSTP}} -- (1.8,0.7);
+  \draw[sig] (3.4,0.25) node[below, tl, sigc]{\code{SIGCONT}} -- (3.4,0.7);
+  \draw[decorate, decoration={brace, amplitude=4pt}, thick, accent] (5.1,1.65) -- node[right=2mm, tl, align=left, color=accent]{concurrent:\\background job} (5.1,0.65);
+  \node[term, anchor=north west] at (8.0,2.4) {\$ \textcolor{sigc}{./loop}\\0\\1\\2\\\textcolor{kernc}{[1]+ Stopped ./loop}\\\$ 3\\4\\5};
+\end{tikzpicture}
+
+\vspace{4mm}
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \timeaxis{5.4}{2.3}
+  \node[lane, parentc] at (-0.1,1.5) {Parent: shell};
+  \node[lane, childc] at (-0.1,0.8) {Child: \code{./loop}};
+  \draw[run, parentc] (0,1.5) -- (0.8,1.5);
+  \draw[blocked, parentc] (0.8,1.5) -- (1.8,1.5);
+  \draw[run, parentc] (1.8,1.5) -- (3.4,1.5);
+  \draw[blocked, parentc] (3.4,1.5) -- (5,1.5);
+  \draw[run, childc] (0.8,0.8) -- (1.8,0.8);
+  \draw[blocked, childc!60] (1.8,0.8) -- (3.4,0.8);
+  \draw[run, childc] (3.4,0.8) -- (5,0.8);
+  \draw[evt] (0.8,1.5) -- (0.8,2.1) node[anchor=south east, tl, xshift=-0.5mm]{\code{fork()}, \code{exec()}, \code{waitpid()}};
+  \draw[evt] (3.4,1.5) -- (3.4,2.1) node[anchor=south west, tl, xshift=0.5mm]{user enters \code{fg}};
+  \draw[sig] (1.8,0.25) node[below, tl, sigc]{\code{SIGTSTP}} -- (1.8,0.7);
+  \draw[sig] (3.4,0.25) node[below, tl, sigc]{\code{SIGCONT}} -- (3.4,0.7);
+  \node[tl, align=left, color=accent, anchor=west] at (5.2,1.15) {foreground\\job again};
+  \node[term, anchor=north west] at (8.0,2.4) {\$ \textcolor{sigc}{./loop}\\0\\1\\2\\\textcolor{kernc}{[1]+ Stopped ./loop}\\\$ \textcolor{sigc}{fg}\\3\\4\\5};
+\end{tikzpicture}
+\caption{Top: after \code{SIGCONT} the shell is not waiting, so \code{./loop} runs as a background job (after slide 87). Bottom: \code{fg} sends \code{SIGCONT} and calls \code{waitpid()} again (after slide 88).}
+\label{fig:jobs}
+\end{figure}
+
+\Cref{fig:jobs} traces the experiment.
+\begin{itemize}
+  \item While \code{./loop} runs in the foreground, the shell is blocked in \code{waitpid()}.
+  \item \code{SIGTSTP} stops the child; \code{waitpid()} returns, and the shell regains control, printing \code{[1]+ Stopped} and a prompt.
+  \item \code{SIGCONT} resumes the child, but the shell does \emph{not} call \code{waitpid()} again. The two now run concurrently: the child has become a background job, and its output mixes with what you type.
+  \item The \code{fg} command sends \code{SIGCONT} \emph{and} blocks in \code{waitpid()} again, bringing the job back to the foreground. Implementing \code{fg} yourself therefore takes \code{kill(pid, SIGCONT)} followed by \code{waitpid(pid, ...)}.
+\end{itemize}
+
+\subsection{The \texorpdfstring{\code{kill()}}{kill()} System Call}
+
+Just like the command, the \code{kill()} system call sends a signal to a process, and the library function \code{raise()} sends a signal to the caller itself:
+\begin{lstlisting}
+int kill(pid_t pid, int sig);
+int raise(int sig);             // equivalent to kill(getpid(), sig)
+\end{lstlisting}
+
+\subsection{Standard Signals}
+
+\code{man 7 signal} gives the full list. The common ones:
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+  Signal & Description & Default handler \\
+  \midrule
+  \code{SIGINT} & interrupt from keyboard (Ctrl-C) & terminate \\
+  \code{SIGTERM} & termination (default of \code{kill}) & terminate \\
+  \code{SIGKILL} & kill, no matter what & terminate (cannot be overridden) \\
+  \code{SIGTSTP} & stop typed at terminal (Ctrl-Z) & stop \\
+  \code{SIGSTOP} & stop, no matter what & stop (cannot be overridden) \\
+  \code{SIGCONT} & continue if stopped & continue \\
+  \code{SIGCHLD} & child stopped or terminated & ignore \\
+  \code{SIGFPE} & floating-point exception & terminate and dump core \\
+  \code{SIGSEGV} & invalid memory reference & terminate and dump core \\
+  \code{SIGALRM} & timer set by \code{alarm()} & terminate \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\begin{keypoint}
+  \code{SIGKILL} and \code{SIGSTOP} cannot be caught, blocked, or ignored. They are the administrator's last resort; otherwise a rogue program could intercept every signal and become impossible to stop. \code{kill -9} sends \code{SIGKILL}. Note also that \code{SIGCHLD} is ignored by default, which is the precondition for zombies (\Cref{sec:internals}).
+\end{keypoint}
+
+\subsection{Changing Signal Handlers}
+
+The \code{signal()} system call changes a signal handler. Its prototype is one of the hardest declarations in C to read:
+\begin{lstlisting}
+void ( *signal(int sig, void (*handler)(int)) ) (int);
+\end{lstlisting}
+A \code{typedef} untangles it:
+\begin{lstlisting}
+typedef void (*sighandler_t)(int);
+sighandler_t signal(int sig, sighandler_t handler);
+\end{lstlisting}
+The first argument is the signal number, and the second is a pointer to the new handler, a function taking an \code{int} and returning \code{void}. The return value is the \emph{old} handler, so that it can be restored later.
+
+\begin{example}[Changing the Behavior of Ctrl-C]
+\begin{lstlisting}
+void handler(int sig) {
+  printf("...Ouch!\n");
+}
+
+int main() {
+  signal(SIGINT, handler);
+  for (int i = 0; ; ++i) {
+    printf("%d\n", i);
+    sleep(1);
+  }
+}
+\end{lstlisting}
+  Ctrl-C now prints \code{...Ouch!} and the loop continues. To stop the program, use \code{kill -9} (\code{SIGKILL} cannot be overridden) or send \code{SIGTERM} from another terminal. The handler's parameter \code{sig} is the signal number, so one function can be registered for several signals and tell them apart.
+\end{example}
+
+\subsection{Waiting for a Signal}
+
+The \code{pause()} system call puts the process to block (sleep) until either a signal that is \emph{handled} by the process arrives, or a signal that \emph{terminates} the process arrives.
+
+\begin{example}[\code{pause()}]
+\begin{lstlisting}
+void handler(int sig) { }      // empty, but it must exist
+
+int main() {
+  signal(SIGINT, handler);
+  printf("Press Ctrl-C to continue...\n");
+  pause();
+  printf("...Adiós!\n");
+}
+\end{lstlisting}
+  The empty handler cannot be omitted. Without it, \code{SIGINT} takes its default action and terminates the process, so the last line would never run: \code{pause()} returns only for a signal that is handled.
+\end{example}
+
+\subsection{Timers}
+
+The \code{alarm()} system call sets up a one-time asynchronous timer for the process. When it expires, the process receives \code{SIGALRM}, whose default handler terminates the process; the handler can be overridden. The \code{setitimer()} system call sets up a \emph{periodic} interval timer. Together these suggest how \code{sleep()} can be built: set \code{alarm(n)}, install an empty \code{SIGALRM} handler, and call \code{pause()}.
+
+\begin{keypoint}[Summary]
+  A signal is a kind of software interrupt with many quirky behaviors. \code{kill()} is not meant to kill anyone; it sends signals. When in doubt, read the man page.
+\end{keypoint}
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:signals-further}
+
+\paragraph{Use \code{sigaction()} in practice.} \code{signal()} is not portable. Under System V semantics the handler is reset to the default after it runs, so it must reinstall itself, leaving a race window; under BSD semantics the handler stays installed and the same signal is blocked while it runs. \code{sigaction()} makes the behavior explicit through flags and is the interface recommended by POSIX. The course uses \code{signal()} for brevity.
+
+\paragraph{Handlers can do very little.} A handler may run between any two instructions of the program, so it may call only \emph{async-signal-safe} functions. Strictly speaking \code{printf()} is not one: it takes locks and touches buffers, and re-entering it from a handler while the main program is inside \code{printf()} corrupts its state. The safe pattern is to set a \code{volatile sig\_atomic\_t} flag and let the main loop act on it. The examples above call \code{printf()} for demonstration only.
+
+\paragraph{Standard signals do not queue.} Pending standard signals are kept as a bitmap, so the same signal arriving three times may be seen once. This is why a \code{SIGCHLD} handler must loop over \code{waitpid}: three children exiting together may trigger the handler once. Real-time signals (\code{SIGRTMIN} and above) are queued.
+
+\paragraph{Signals interrupt blocking system calls.} A process blocked in \code{read()} that receives a handled signal sees \code{read()} return $-1$ with \code{errno} set to \code{EINTR}. Robust code checks for \code{EINTR} and retries; the \code{SA\_RESTART} flag of \code{sigaction()} makes the kernel restart some system calls automatically.
+
+\paragraph{Graceful shutdown uses \code{SIGTERM}.} \code{SIGTERM} can be caught, giving the program a chance to flush buffers, close connections, and finish its logs. \code{SIGKILL} gives no chance at all. Hence \code{docker stop}, \code{systemctl stop}, and Kubernetes first send \code{SIGTERM}, wait for a grace period, and only then send \code{SIGKILL}.
+
+\paragraph{Ctrl-C goes to the whole foreground process group.} The terminal driver sends \code{SIGINT} to every process in the foreground process group, so all three processes of a pipeline \code{a | b | c} receive it. This is why job control puts them in one group.

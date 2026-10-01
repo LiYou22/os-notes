@@ -1,0 +1,260 @@
+\section{Process Creation and Execution}
+\label{sec:fork}
+
+\subsection{Process Identification}
+
+\begin{definition}[PID]
+  The OS gives each process a unique identifier, the \emph{process ID} (PID). \code{getpid()} returns the PID of the caller, and \code{getppid()} returns the PID of its \emph{parent}.
+\end{definition}
+
+Running the same program repeatedly shows a different PID each time, while the parent PID stays the same: the parent is the shell that launched it.
+
+\subsection{Process Creation: \texorpdfstring{\code{fork()}}{fork()}}
+
+Unix does not create a process by starting a new program from scratch. It \emph{clones the current process}.
+
+\begin{definition}[\code{fork()}]
+  \code{fork()} creates a new \emph{child} process that is a copy of the calling \emph{parent}. Both continue executing from the point where \code{fork()} returns. It returns the child's PID (or $-1$ on failure) in the parent and $0$ in the child.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[pill, fill=initc!25] (p0) at (0,0) {Parent process};
+  \node[tool, font=\small\ttfamily] (f) at (2.5,0) {fork()};
+  \node[pill, fill=initc!25] (p1) at (4.8,0.7) {Parent process};
+  \node[pill, fill=kspace] (c1) at (4.8,-0.7) {Child process};
+  \draw[arr] (p0) -- (f);
+  \draw[arr, initc] (f.east) -- (p1.west);
+  \draw[arr, kernc] (f.east) -- (c1.west);
+  \node[term, anchor=west] at (7,0) {%
+    \$ ./fork\\
+    \colorbox{initc!20}{Before fork, my PID is 2436}\\
+    \colorbox{initc!20}{After fork, my PID is 2436}\\
+    \colorbox{kspace}{After fork, my PID is 2437}\\
+    \$ \_};
+\end{tikzpicture}
+\caption{\code{fork()} clones the caller; both copies continue after the call (after slide 15).}
+\label{fig:fork}
+\end{figure}
+
+\begin{example}[\code{fork.c}]
+\begin{lstlisting}
+int main() {
+  printf("Before fork, my PID is %d\n", getpid());
+  fork();
+  printf("After fork, my PID is %d\n", getpid());
+}
+\end{lstlisting}
+  ``Before'' is printed once and ``After'' twice, with different PIDs (\Cref{fig:fork}). The child does not run from the beginning; it starts when \code{fork()} returns. Parent and child execute the same code, so every line after \code{fork()} runs in both, while ``Before'' is printed only once because the child did not exist yet.
+\end{example}
+
+\subsubsection{Telling Parent from Child}
+
+Since both processes run the same code, the return value is the only way to tell them apart:
+\begin{lstlisting}
+int ret = fork();
+if (ret == 0) {
+    // child
+} else if (ret > 0) {
+    // parent; ret is the child's PID
+} else {
+    // fork failed
+}
+\end{lstlisting}
+The design is deliberate. The child can always find its parent with \code{getppid()}, but the parent has no other way to learn who its new child is, so the useful return value goes to the parent.
+
+\subsubsection{What the Child Inherits}
+
+The child inherits, but is independent from, the parent's
+\begin{itemize}
+  \item program code,
+  \item program counter (so both continue at the same point),
+  \item memory (global and local variables, dynamically allocated memory), and
+  \item open files.
+\end{itemize}
+It receives a \emph{copy}; afterwards each side modifies its own. The child differs in the following:
+\begin{center}
+\begin{tabular}{ll}
+  \toprule
+  Item & In the child \\
+  \midrule
+  return value of \code{fork()} & $0$ (the parent gets the child's PID, or $-1$) \\
+  PID & a new PID, \emph{not necessarily} the parent's PID $+ 1$ \\
+  parent & the calling process, not the grandparent \\
+  running time & reset to $0$ \\
+  file locks & not inherited \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsubsection{Buffering and \texorpdfstring{\code{fork()}}{fork()}}
+
+\begin{example}[A Classic Trap]
+\begin{lstlisting}
+int main() {
+  printf("Hello ");
+  fork();
+  printf("2250\n");
+}
+\end{lstlisting}
+  One might expect \code{Hello 2250} followed by \code{2250}. The output is \code{Hello 2250} \emph{twice}.
+\end{example}
+
+\code{printf()} is a library function built on the \code{write()} system call, and the \code{FILE} structure holds a \emph{buffer} to reduce the number of system calls. \code{"Hello "} has no newline, so at the time of \code{fork()} it is still in the buffer. The child inherits the buffer together with its contents, and both processes eventually flush it. The C standard library uses three buffering policies:
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+  Policy & Behavior & Default for \\
+  \midrule
+  unbuffered & \code{write()} immediately & \code{stderr} \\
+  line-buffered & \code{write()} at a newline & \code{stdin}, \code{stdout} \\
+  fully buffered & \code{write()} when full or at exit & files \\
+  \bottomrule
+\end{tabular}
+\end{center}
+The fix is to flush before forking, \code{fflush(stdout)}, or to change the policy with \code{setvbuf()}.
+
+\begin{remark}
+  This also explains why output on \code{stderr} survives a crash while output on \code{stdout} may be lost: it may still be sitting in the buffer.
+\end{remark}
+
+\subsubsection{Who Runs First}
+
+On a single processor only one process runs at a time. Whether the parent or the child runs first after \code{fork()} is decided by the OS scheduler and is \emph{unknown} to the program. Code that assumes either order is wrong.
+
+\subsection{Process Execution: the \texorpdfstring{\code{exec*()}}{exec*()} Family}
+
+\code{fork()} can only duplicate the caller. To run a \emph{different} program we need \code{execve()}.
+
+\begin{definition}[\code{execve()}]
+\begin{lstlisting}
+int execve(const char *filename, char *const argv[], char *const envp[]);
+\end{lstlisting}
+  \code{execve()} replaces the current process image with a new program. On success it does not return.
+\end{definition}
+
+\begin{example}[Code After \code{exec} Is Dead]
+\begin{lstlisting}
+int main() {
+  printf("Before exec\n");
+  execl("/bin/ls", "/bin/ls", NULL);
+  printf("After exec\n");     // never reached
+}
+\end{lstlisting}
+  Once \code{execl} succeeds, the process runs \code{ls} and there is no way back. The last line runs only if the call \emph{fails}, so a call to \code{exec} is normally followed by error handling.
+\end{example}
+
+The process discards its memory (global, local, and dynamically allocated) and its registers, including the program counter. It keeps its PID, its relationships with other processes, its running time, and so on.
+
+\begin{keypoint}
+  \code{fork()} creates a process; \code{exec()} changes the program a process runs. The ``container'' stays the same while its contents change.
+\end{keypoint}
+
+\subsubsection{Naming Convention}
+
+Calling \code{execve()} directly is verbose, so there is a family of wrappers whose suffixes follow a pattern:
+\begin{center}
+\begin{tabular}{cl}
+  \toprule
+  Suffix & Meaning \\
+  \midrule
+  (none) & the first argument is a \emph{path name}, e.g.\ \code{/bin/ls} \\
+  \code{p} & the first argument is a \emph{file name}, e.g.\ \code{ls}, searched in \code{PATH} \\
+  \code{l} & arguments as a \emph{list}: \code{execl("/bin/ls", "/bin/ls", "-a", NULL)} \\
+  \code{v} & arguments as an \emph{array}: \code{execv("/bin/ls", argv)} \\
+  \code{e} & an explicit \emph{environment} array; without \code{e}, inherit the current one \\
+  \bottomrule
+\end{tabular}
+\end{center}
+The combinations are \code{execl}, \code{execlp}, \code{execle}, \code{execv}, \code{execvp}, and \code{execve}. The \code{l} variants are variadic and must end with \code{NULL}. By convention \code{argv[0]} is the program name itself, which is why the path usually appears twice.
+
+\subsubsection{Environment Variables}
+
+Environment variables are a set of strings maintained by the shell, and many programs read them. \code{main} can take a third parameter, organized exactly like \code{argv} as a \code{NULL}-terminated array of string pointers:
+\begin{lstlisting}
+int main(int argc, char **argv, char **envp) {
+  while (*envp)
+    printf("%s\n", *envp++);
+}
+\end{lstlisting}
+Common ones are \code{PATH} (where to search for commands), \code{HOME}, \code{SHELL}, \code{PWD}, and \code{LANG}.
+
+\subsection{Running a Program and Coming Back}
+
+The library function \code{system()} runs a command and then \emph{returns to the original code}. It is implemented with \code{fork()} and \code{exec()}, running \code{/bin/sh -c command}.
+
+\begin{example}[\code{my\_system}, First Attempt]
+\begin{lstlisting}
+int my_system(const char *command) {
+  if (fork() == 0) {
+    execl("/bin/sh", "/bin/sh", "-c", command, NULL);
+    exit(-1);                   // only reached if execl fails
+  }
+  return 0;
+}
+\end{lstlisting}
+  This version works, but the output order is nondeterministic: the parent continues without waiting for the child, so ``After system'' may appear before the output of the command. The \code{exit(-1)} is essential: if \code{execl} fails and the child does not exit, it continues into the caller's code and ``After system'' is printed twice.
+\end{example}
+
+What we want is not to ``let the child run first''---the scheduler is not ours to control---but to \emph{suspend} the parent and \emph{wake it up} once the child has finished.
+
+\begin{definition}[\code{wait()}]
+  \code{wait()} suspends the calling process until one of its children terminates. A non-\code{NULL} argument receives the child's status, such as its exit code; \code{NULL} means ``don't care''. If the caller has no children, \code{wait()} returns $-1$ immediately. \code{waitpid()} is the general version: it can wait for a \emph{specific} child, or for children that are stopped or resumed.
+\end{definition}
+
+\begin{example}[\code{my\_system} with \code{wait()}]
+\begin{lstlisting}
+int my_system(const char *command) {
+  if (fork() == 0) {
+    execl("/bin/sh", "/bin/sh", "-c", command, NULL);
+    exit(-1);
+  }
+  wait(NULL);                   // block until a child terminates
+  return 0;
+}
+\end{lstlisting}
+\end{example}
+
+\subsection{Reading Man Pages}
+
+Man pages give the headers to include, compile flags, arguments, return values, and error conditions. They are divided into sections, and the section number matters:
+\begin{center}
+\begin{tabular}{cl}
+  \toprule
+  Section & Contents \\
+  \midrule
+  1 & executable programs or shell commands \\
+  2 & system calls (functions provided by the kernel) \\
+  3 & library calls (functions within program libraries) \\
+  \bottomrule
+\end{tabular}
+\end{center}
+\code{man wait} is \code{man 1 wait}, the shell built-in; the system call is \code{man 2 wait}. \code{man man} lists all sections.
+
+\subsection{Are \texorpdfstring{\code{fork()}}{fork()} and \texorpdfstring{\code{exec()}}{exec()} Wasteful?}
+
+It seems wasteful that \code{fork()} copies all the parent's memory only for \code{exec()} to discard it. In reality nothing is copied up front.
+
+\begin{definition}[Copy-on-Write]
+  After \code{fork()}, the child shares memory with the parent \emph{copy-on-write} (COW). As long as neither process modifies the shared memory, no copy is made. When one of them writes to a piece of it, the OS copies that piece, and the modification happens privately.
+\end{definition}
+
+So the common pattern of \code{fork()} immediately followed by \code{exec()} copies almost nothing.
+
+\begin{keypoint}[Summary]
+  A process is created by cloning: \code{fork()} copies the caller, and the clone inherits much, but not everything, from its parent. A process is the entity that runs a program, and it may run more than one program in its lifetime: the \code{exec*()} family replaces the program a process runs; it does not create a process. Where the very first process comes from is the subject of \Cref{sec:org}.
+\end{keypoint}
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:fork-further}
+
+\paragraph{\code{fork()} returns twice.} This is its most counterintuitive property, but from the kernel's side it is simple: the kernel duplicates the \ts{} and writes different return values into the two saved register contexts (\Cref{sec:internals}).
+
+\paragraph{\code{wait(NULL)} waits for any one child.} With several children it returns when the first one terminates. To reap all of them, loop until it returns $-1$, or name each child with \code{waitpid(pid, ...)}.
+
+\paragraph{Command injection.} \code{system()} hands its argument to \code{/bin/sh -c}, so any external input spliced into the string may be executed as shell code. When arguments are needed, use \code{fork()} and \code{execv()} and pass them as array elements, which avoids shell parsing altogether.
+
+\paragraph{When the parent exits first.} The child does not die with it; it is adopted by \code{init} or systemd (PID 1). This is why background jobs can outlive the shell (\Cref{sec:org}).
+
+\paragraph{\code{vfork()} and \code{posix\_spawn()}.} Before COW, \code{vfork()} avoided the copy when an \code{exec} was imminent; it is now obsolete and semantically dangerous. \code{posix\_spawn()} is the portable one-step ``create and execute'' interface.

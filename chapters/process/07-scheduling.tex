@@ -1,0 +1,448 @@
+\section{Process Scheduling}
+\label{sec:sched}
+
+\subsection{What Scheduling Is}
+
+Computers often do several things concurrently, even with a single CPU.
+
+\begin{definition}[Multiprogramming, Multitasking, Scheduling]
+  Keeping several programs in memory at once is \emph{multiprogramming}. Switching the CPU from process to process quickly, running each for a few milliseconds, is \emph{multitasking}. Choosing which process to run next is \emph{scheduling}, and the part of the OS that makes the choice is the \emph{scheduler}.
+\end{definition}
+
+\subsection{Process States}
+
+\begin{definition}[Process States]
+  At any moment a process is in one of the following states.
+  \begin{itemize}
+    \item \emph{Ready}: runnable, but temporarily stopped to let another process run.
+    \item \emph{Running}: actually using the CPU at that instant.
+    \item \emph{Blocked} (a.k.a.\ sleeping or waiting): unable to run until some external event happens. The block is either \emph{interruptible}, in which case a signal can end it, or \emph{uninterruptible}.
+    \item \emph{Zombie}: exited, but not yet waited for by its parent (\Cref{sec:internals}).
+  \end{itemize}
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[st/.style={draw, rounded corners=2pt, fill=kspace, minimum width=22mm, minimum height=8mm}]
+  \node[font=\ttfamily] (fork) at (-2.8,0) {fork()};
+  \node[st] (ready) at (0,0) {Ready};
+  \node[st] (run) at (4.2,0) {Running};
+  \node[st] (zomb) at (8.2,0) {Zombie};
+  \node[st, fill=initc!30, minimum width=26mm] (intr) at (0.6,-2.4) {Interruptible};
+  \node[st, fill=initc!30, minimum width=26mm] (unin) at (3.8,-2.4) {Uninterruptible};
+  \begin{scope}[on background layer]
+    \node[fit=(intr)(unin), fill=initc!10, draw=initc!60, rounded corners=3pt, inner sep=6pt,
+          label={[font=\scriptsize]below:Blocked (a.k.a.\ sleeping or waiting)}] (blk) {};
+  \end{scope}
+  \draw[arr] (fork) -- (ready);
+  \draw[arr] ([yshift=1.5mm]ready.east) -- node[above, font=\scriptsize]{scheduled} ([yshift=1.5mm]run.west);
+  \draw[arr] ([yshift=-1.5mm]run.west) -- node[below, font=\scriptsize]{preempted} ([yshift=-1.5mm]ready.east);
+  \draw[arr] (run) -- node[above, font=\scriptsize]{\code{exit()}} (zomb);
+  \draw[arr, sigc] (run.south) -- node[right, font=\scriptsize]{waits for an event} (run.south |- blk.north);
+  \draw[arr] (ready.south |- blk.north) -- node[left, font=\scriptsize]{event happens} (ready.south);
+\end{tikzpicture}
+\caption{Process states (after slides 113--120).}
+\label{fig:states}
+\end{figure}
+
+\Cref{fig:states} shows the transitions.
+\begin{itemize}
+  \item A process becomes \emph{ready} when it has just been created by \code{fork()}, when it has run on the CPU long enough and the scheduler picks another process, or when it returns from a blocked state.
+  \item It becomes \emph{running} when the scheduler picks it.
+  \item It becomes \emph{blocked} when, for example, it calls \code{pause()} (\Cref{sec:signals}) or reads from an I/O device. Reading a file from disk is an interruptible block: the process waits for the disk, but Ctrl-C gets it out. A process that waits for a resource and must not be disturbed meanwhile is in an uninterruptible block; this usually happens inside the kernel.
+  \item When the external event happens, a blocked process becomes \emph{ready} again---not running: whether it runs is still up to the scheduler.
+  \item A \emph{zombie} terminates for good when its parent finally waits for it.
+\end{itemize}
+
+\subsection{Context Switching}
+
+When it is time for a process to give up the CPU, the scheduler in the kernel chooses the next process to run. Before the scheduler can take over the CPU, it must back up the register values of the current process, and the backup is stored in that process's \ts{}.
+
+\begin{definition}[Context and Context Switch]
+  The \emph{context} of a process consists of its user-space memory and its register values. If the scheduler picks a process different from the current one, the OS performs a \emph{context switch}, which includes
+  \begin{itemize}
+    \item saving and restoring registers,
+    \item switching memory maps,
+    \item flushing and reloading the cache, \dots
+  \end{itemize}
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[field, minimum width=24mm] (pc) at (0,0) {Program counter};
+  \node[field, minimum width=24mm, below=1mm of pc] (rg) {Registers};
+  \node[font=\small\bfseries, above=1mm of pc] (cpu) {CPU};
+  \begin{scope}[on background layer]
+    \node[fit=(pc)(rg)(cpu), fill=initc!25, draw=initc!70, rounded corners=3pt] {};
+  \end{scope}
+  \node[font=\scriptsize] (uat) at (5.4,2.9) {Process A};
+  \fieldstack[seg, fill=tsk, minimum width=17mm]{ua}{uat.south}{Code, Data, Heap, \dots, Stack}
+  \node[font=\scriptsize] (ubt) at (9.0,2.9) {Process B};
+  \fieldstack[seg, fill=tsk, minimum width=17mm]{ub}{ubt.south}{Code, Data, Heap, \dots, Stack}
+  \node[font=\scriptsize\bfseries, above=1mm of $(uat.north)!0.5!(ubt.north)$] (us) {User space};
+  \node[font=\scriptsize\bfseries] (ks) at (7.2,-0.75) {Kernel space};
+  \fieldstack[field, minimum width=36mm]{k}{ks.south}{Scheduler, \ts{} of A, \ts{} of B}
+  \begin{scope}[on background layer]
+    \node[fit=(us)(ua-5)(ub-5), fill=uspace, draw=parentc, inner sep=4pt] {};
+    \node[fit=(ks)(k-3), fill=kspace, draw=kernc, inner sep=4pt] {};
+  \end{scope}
+  \draw[arr, sigc] (rg.east) to[out=0, in=180] node[above, pos=0.55, font=\scriptsize]{(1) save} (k-2.west);
+  \draw[arr, kernc] (k-3.west) to[out=180, in=-30] node[below, pos=0.4, font=\scriptsize]{(2) restore} (rg.south east);
+  \draw[arr, dashed] (ua-3.east) -- node[above, font=\scriptsize, align=center]{(3) switch\\memory map} (ub-3.west);
+\end{tikzpicture}
+\caption{A context switch from process A to process B (after slides 121--123): (1) save A's registers in its \ts{}; (2) restore B's registers; (3) switch to B's address space.}
+\label{fig:ctxsw}
+\end{figure}
+
+\begin{keypoint}
+  A context switch may be expensive, and while it happens the system is not doing any useful work.
+\end{keypoint}
+
+\subsection{CPU-Bound and I/O-Bound Processes}
+
+The execution of most processes alternates between computing on the CPU and waiting for I/O.
+
+\begin{definition}[CPU-Bound and I/O-Bound]
+  A \emph{CPU-bound} process spends most of its running time on the CPU: compiling a program, rendering a video, mining Bitcoin, scientific computing. The \code{time} command reports user time $>$ sys time. An \emph{I/O-bound} process spends most of its running time on I/O: \code{/bin/ls}, downloading a file, printing an image. The \code{time} command reports sys time $>$ user time.
+\end{definition}
+
+\subsection{When to Schedule}
+
+The scheduler has to make a decision when
+\begin{itemize}
+  \item a new process is created---it decides whether to run the parent or the child (recall ``who runs first'' in \Cref{sec:fork});
+  \item an existing process terminates---it chooses another process, and if none is ready, runs an \emph{idle} process;
+  \item a process starts waiting for I/O or something else---the process is blocked, so another one must be chosen;
+  \item a process finishes waiting for I/O---it becomes ready again, and the scheduler decides whether to run it now;
+\end{itemize}
+or simply periodically.
+
+\begin{definition}[Nonpreemptive and Preemptive Scheduling]
+  Under \emph{nonpreemptive} scheduling, a scheduled process keeps running until it starts waiting for I/O (or something else) or voluntarily relinquishes the CPU (\code{man 2 sched\_yield}). Under \emph{preemptive} scheduling, a process may run for a particular period of time; when the time is up or some particular event occurs (e.g., I/O completion), it is suspended and another process may run. The hardware clock interrupt gives control of the CPU back to the scheduler.
+\end{definition}
+
+Without the clock interrupt, a process stuck in an infinite loop would never hand the CPU back.
+
+\subsection{What Makes a Good Scheduler}
+
+\paragraph{General goals.}
+\begin{itemize}
+  \item \emph{Fairness}: each process gets a fair share of the CPU.
+  \item \emph{Policy enforcement}: the system's policies are carried out, e.g., an administrator states that certain processes have a higher priority.
+  \item \emph{Balance}: all parts of the system are kept busy, e.g., by mixing CPU-bound and I/O-bound processes.
+\end{itemize}
+
+\paragraph{Batch systems.} A batch system collects a set of jobs and processes them in batches: bank systems, data analytics, or your laundry basket, ``submitted'' at the end of the week. Batch jobs need no user interaction, so nonpreemptive scheduling, or preemptive scheduling with large time slices, is acceptable. The goals are
+\begin{itemize}
+  \item \emph{high throughput}: maximize the number of jobs per hour;
+  \item \emph{short turnaround time}: minimize the time between submission and completion;
+  \item \emph{high CPU utilization}: keep the CPU busy all the time (whether this is a good metric is discussed in \Cref{sec:sched-further}).
+\end{itemize}
+
+\paragraph{Interactive systems.} An interactive system may be a computer with an interactive user or a server with many. Preemption is essential to keep one process from denying service to others. The goals are
+\begin{itemize}
+  \item \emph{short response time}: minimize the time between request and response; interactive jobs may take precedence over background jobs;
+  \item \emph{proportionality}: meet users' expectations---loading a video game for minutes is acceptable, reacting a second after you press A is not.
+\end{itemize}
+
+\paragraph{Real-time systems.} A real-time system must guarantee a response within specified time constraints, like a robot welding cars on an assembly line. The goals are
+\begin{itemize}
+  \item \emph{meeting deadlines}: avoid losing data (or a car, or a nuclear reactor); if a device produces data at a regular rate, the data-collection process must run on time;
+  \item \emph{predictability}: avoid quality degradation in multimedia; if the audio process runs erratically, sound quality deteriorates rapidly (jitter).
+\end{itemize}
+
+\subsection{Scheduling Algorithms and Metrics}
+
+The algorithms below are first-come first-served (nonpreemptive), shortest job first (nonpreemptive or preemptive), round-robin (preemptive), and priority scheduling (nonpreemptive or preemptive). They are compared with the following metrics.
+
+\begin{definition}[Wait Time, Turnaround Time, Response Time]
+  The \emph{wait time} of a job is the total time it is in the system but not running. Its \emph{turnaround time} is the time from its arrival to its completion, and its \emph{response time} is the time from its arrival to the first time it is scheduled:
+  \begin{equation}
+    T_{\text{turnaround}} = T_{\text{completion}} - T_{\text{arrival}},
+    \qquad
+    T_{\text{response}} = T_{\text{first run}} - T_{\text{arrival}}.
+  \end{equation}
+\end{definition}
+
+For a job that runs without interruption, response time equals wait time. All examples below ignore the cost of context switching.
+
+\subsection{First-Come, First-Served}
+
+\emph{First-come, first-served} (FCFS), a.k.a.\ first-in first-out (FIFO), is a nonpreemptive algorithm for batch systems: jobs run to completion in order of arrival.
+
+\begin{example}[FCFS]
+  \label{ex:fcfs}
+  All jobs arrive at time $0$. \Cref{fig:fcfs} shows three runs, and the table their metrics.
+  \begin{center}
+  \begin{tabular}{clcccc}
+    \toprule
+     & CPU requirement & Order & Wait times & Avg.\ wait & Avg.\ turnaround \\
+    \midrule
+    (1) & $A = B = C = 10$ & A, B, C & $0, 10, 20$ & $10$ & $20$ \\
+    (2) & $A = 100$, $B = C = 10$ & A, B, C & $0, 100, 110$ & $70$ & $110$ \\
+    (3) & $A = 100$, $B = C = 10$ & B, C, A & $0, 10, 20$ & $10$ & $50$ \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+  Runs (2) and (3) schedule the same jobs; only the order differs, yet the average turnaround time drops from $110$ to $50$.
+\end{example}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=0.9mm, y=10mm]
+  \ganttrow{2}{(1)}{0/10/A, 10/20/B, 20/30/C}
+  \ganttrow{1}{(2)}{0/100/A, 100/110/B, 110/120/C}
+  \ganttrow{0}{(3)}{0/10/B, 10/20/C, 20/120/A}
+  \ganttaxis{0}{0,10,20,30,40,50,60,70,80,90,100,110,120}
+\end{tikzpicture}
+\caption{FCFS Gantt charts for the three runs of \Cref{ex:fcfs} (after slides 134--136).}
+\label{fig:fcfs}
+\end{figure}
+
+The weakness of FCFS is visible in run (2): a long job at the head of the queue makes every short job behind it wait.
+
+\subsection{Shortest Job First}
+
+\emph{Shortest job first} (SJF) always runs the job with the smallest CPU requirement. It has a nonpreemptive and a preemptive version.
+
+With all jobs arriving at time $0$, nonpreemptive SJF on $A = 100$, $B = C = 10$ produces exactly run (3) of \Cref{ex:fcfs}. Things change when the short jobs arrive slightly later.
+
+\begin{example}[Nonpreemptive SJF and PSJF]
+  \label{ex:sjf}
+  Job A arrives at time $0$ and needs $100$; jobs B and C arrive at time $10$ and need $10$ each (\Cref{fig:sjf}).
+  \begin{center}
+  \begin{tabular}{lcccc}
+    \toprule
+     & Wait times (A, B, C) & Avg.\ wait & Turnaround times (A, B, C) & Avg.\ turnaround \\
+    \midrule
+    SJF & $0, 90, 100$ & $63.33$ & $100, 100, 110$ & $103.33$ \\
+    PSJF & $20, 0, 10$ & $10$ & $120, 10, 20$ & $50$ \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+\end{example}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=0.9mm, y=10mm]
+  \ganttrow{1}{SJF}{0/100/A, 100/110/B, 110/120/C}
+  \ganttrow{0}{PSJF}{0/10/A, 10/20/B, 20/30/C, 30/120/A}
+  \ganttaxis{0}{0,10,20,30,40,50,60,70,80,90,100,110,120}
+  \draw[sig] (10,1.75) node[above, font=\scriptsize]{B \& C arrive} -- (10,1.25);
+\end{tikzpicture}
+\caption{Nonpreemptive SJF and PSJF on the jobs of \Cref{ex:sjf} (after slides 139 and 141).}
+\label{fig:sjf}
+\end{figure}
+
+Under nonpreemptive SJF, B and C arrive just after A has started, yet they must wait until A completes.
+
+\begin{definition}[Convoy Effect]
+  The \emph{convoy effect} occurs when a number of relatively short consumers of a resource get queued behind a heavyweight consumer.
+\end{definition}
+
+\emph{Preemptive shortest job first} (PSJF) addresses it: whenever a new job arrives, the scheduler determines which job has the shortest \emph{remaining} time and schedules that one, preempting the current job if necessary. In \Cref{ex:sjf}, B and C preempt A at time $10$.
+
+\subsection{Round-Robin}
+
+PSJF looks great for batch systems, but users of interactive systems demand a short \emph{response time}, which PSJF does not aim for.
+
+\begin{definition}[Round-Robin]
+  \emph{Round-robin} (RR) is a preemptive algorithm for interactive systems. Each job is assigned a \emph{time slice} (a.k.a.\ \emph{quantum}), the amount of time it is allowed to run. At the end of the time slice the CPU is preempted and given to the next job. Jobs take turns in a queue called the \emph{run queue}.
+\end{definition}
+
+For simplicity, all jobs have the same time slice.
+
+\begin{example}[RR vs.\ SJF]
+  \label{ex:rr}
+  Jobs A, B, and C arrive at time $0$ and need $50$, $30$, and $40$. RR uses a time slice of $20$ (\Cref{fig:rr}).
+  \begin{center}
+  \begin{tabular}{lcc}
+    \toprule
+     & SJF & RR \\
+    \midrule
+    wait times (A, B, C) & $70, 0, 30$ & $70, 60, 70$ \\
+    turnaround times (A, B, C) & $120, 30, 70$ & $120, 90, 110$ \\
+    response times (A, B, C) & $70, 0, 30$ & $0, 20, 40$ \\
+    \midrule
+    average wait time & $33.33$ & $66.67$ \\
+    average turnaround time & $73.33$ & $106.67$ \\
+    average response time & $33.33$ & $20$ \\
+    number of context switches & $2$ & $6$ \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+\end{example}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=0.9mm, y=10mm]
+  \ganttrow{1}{RR}{0/20/A, 20/40/B, 40/60/C, 60/80/A, 80/90/B, 90/110/C, 110/120/A}
+  \ganttrow{0}{SJF}{0/30/B, 30/70/C, 70/120/A}
+  \ganttaxis{0}{0,10,20,30,40,50,60,70,80,90,100,110,120}
+\end{tikzpicture}
+\caption{RR with a time slice of $20$ vs.\ SJF on the jobs of \Cref{ex:rr} (after slides 144--146).}
+\label{fig:rr}
+\end{figure}
+
+RR typically has worse CPU efficiency than SJF, but jobs on an RR scheduler are more responsive: each job gets the CPU from time to time, so none of them appears frozen. RR is therefore more suitable for interactive systems.
+
+\begin{keypoint}[Trade-offs]
+  There is an inherent trade-off between performance and fairness. A fair scheduler such as RR evenly divides the CPU among active jobs on a small time scale, at the cost of turnaround time; most users run many interactive jobs and value responsiveness more than CPU efficiency.
+
+  A second trade-off comes from context switching, which is relatively slow. With a time slice of $10$~ms and a context switch of $1$~ms, about $10\%$ of the time is wasted; with a time slice of $100$~ms, less than $1\%$ is. A short time slice means many context switches and low CPU efficiency; a long time slice means poor response, and the system feels sluggish.
+\end{keypoint}
+
+\subsection{Priority Scheduling}
+
+\begin{definition}[Priority Scheduling]
+  In \emph{priority scheduling}, each job is assigned a priority, and the scheduler always chooses the job with the highest priority to run. With \emph{static} priorities a job receives a fixed priority when it is submitted---a background email process, say, gets a lower priority than a real-time video game. With \emph{dynamic} priorities a job's priority may change throughout its life.
+\end{definition}
+
+\subsubsection{Static priority scheduling}
+Jobs are kept in one queue per priority level, and each queue is served round-robin (\Cref{fig:prio}). Jobs with priority $3$ are scheduled first; they should be short-lived, to prevent \emph{starvation} of lower-priority jobs. When no job of priority $3$ is left, jobs of priority $2$ are scheduled, and so on. When a higher-priority job appears, the running job may or may not be preempted, depending on whether the scheduler is preemptive.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[q/.style={draw, minimum width=17mm, minimum height=6.5mm, font=\scriptsize},
+                    j/.style={draw, rounded corners=3mm, minimum width=9mm, minimum height=5.5mm}]
+  \foreach \p/\c/\n in {3/jobA/3, 2/orange!60/4, 1/jobB/2, 0/jobC/1} {
+    \node[q, fill=\c] (q\p) at (0,0.9*\p) {Priority \p};
+    \foreach \k in {1,...,\n} {
+      \node[j, fill=\c] (j\p\k) at (1.1+1.15*\k,0.9*\p) {};
+    }
+    \draw (q\p.east) -- (j\p1.west);
+    \ifnum\n>1 \draw (j\p1.east) -- (j\p\n.west); \fi
+  }
+  \node[font=\scriptsize\itshape, above=0pt of q3] {High};
+  \node[font=\scriptsize\itshape, below=0pt of q0] {Low};
+  \node[draw, fill=kernc!70, text=white, font=\scriptsize, single arrow, minimum height=16mm, anchor=east] at ($(q3.west)+(-1mm,0)$) {Scheduler};
+  \node[draw, dashed, fit=(j31)(j24)(j01), inner sep=4pt,
+        label={[font=\scriptsize\itshape]below:round-robin within each queue}] {};
+\end{tikzpicture}
+\caption{Static priority scheduling with four priority levels (after slides 150--152).}
+\label{fig:prio}
+\end{figure}
+
+Static priorities have serious limitations.
+\begin{itemize}
+  \item High-priority jobs may run for a prolonged period, even indefinitely, and low-priority jobs may starve. Rumor has it that when the IBM 7094 at MIT was shut down in 1973, a low-priority process submitted in 1967 had not yet run.
+  \item Static priorities do not distinguish CPU-bound from I/O-bound jobs. An I/O-bound job spends most of its time waiting for I/O; when it does want the CPU, it is best to schedule it immediately so that it can start its next I/O request. That way I/O proceeds in parallel with another process's computation.
+\end{itemize}
+
+\subsubsection{Dynamic priority scheduling}
+There is no standard way to assign priorities dynamically. Recalling the trade-off between efficiency and responsiveness, we would ideally
+\begin{itemize}
+  \item optimize turnaround time: run shorter jobs first, and give CPU-bound jobs a large time slice to reduce context switching;
+  \item make the system responsive to interactive users: we cannot give every job a large time slice, and we want to minimize response time.
+\end{itemize}
+
+\subsection{Multilevel Feedback Queue}
+
+The \emph{multilevel feedback queue} (MLFQ) is a form of dynamic priority scheduling in which each priority level has its own policy. In the running example there are four levels, each served round-robin, with longer time slices at lower priority:
+\begin{center}
+\begin{tabular}{cc}
+  \toprule
+  Priority & Policy \\
+  \midrule
+  3 (highest) & round-robin, time slice $10$ \\
+  2 & round-robin, time slice $20$ \\
+  1 & round-robin, time slice $40$ \\
+  0 (lowest) & round-robin, time slice $80$ \\
+  \bottomrule
+\end{tabular}
+\end{center}
+All jobs start at the highest priority. A job that uses up its time slice drops one level; a job that gives up the CPU before its time slice is up stays at the same level.
+
+\begin{figure}[htbp]
+\centering
+\newcommand{\prows}{%
+  \node[anchor=east, font=\scriptsize, color=initc] at ($(0,3)+(-1.5mm,0)$) {Priority 3};
+  \node[anchor=east, font=\scriptsize, color=orange] at ($(0,2)+(-1.5mm,0)$) {Priority 2};
+  \node[anchor=east, font=\scriptsize, color=tskedge] at ($(0,1)+(-1.5mm,0)$) {Priority 1};
+  \node[anchor=east, font=\scriptsize, color=parentc] at ($(0,0)+(-1.5mm,0)$) {Priority 0};}
+\begin{tikzpicture}[x=0.36mm, y=5.5mm]
+  \node[anchor=west, font=\small\bfseries] at (-60,3.9) {Example 1: a single long-running job};
+  \prows
+  \ganttrow{3}{}{0/10/A}
+  \ganttrow{2}{}{10/30/A}
+  \ganttrow{1}{}{30/70/A}
+  \ganttrow{0}{}{70/150/A, 150/230/A, 230/310/A}
+  \ganttaxis{0}{0,30,70,150,230,310}
+\end{tikzpicture}
+
+\vspace{3mm}
+\begin{tikzpicture}[x=0.36mm, y=5.5mm]
+  \node[anchor=west, font=\small\bfseries] at (-60,3.9) {Example 2: along came a short job};
+  \prows
+  \ganttrow{3}{}{0/10/A, 150/160/B}
+  \ganttrow{2}{}{10/30/A, 160/180/B}
+  \ganttrow{1}{}{30/70/A}
+  \ganttrow{0}{}{70/150/A, 180/260/A, 260/310/A}
+  \ganttaxis{0}{0,30,70,150,180,260,310}
+\end{tikzpicture}
+
+\vspace{3mm}
+\begin{tikzpicture}[x=0.36mm, y=5.5mm]
+  \node[anchor=west, font=\small\bfseries] at (-60,3.9) {Example 3: what about I/O?};
+  \prows
+  \ganttrow{3}{}{0/10/A, 150/151/B, 231/232/B}
+  \ganttrow{2}{}{10/30/A}
+  \ganttrow{1}{}{30/70/A}
+  \ganttrow{0}{}{70/150/A, 151/231/A, 232/310/A}
+  \ganttaxis{0}{0,30,70,150,231,310}
+\end{tikzpicture}
+\caption{MLFQ with time slices $10$, $20$, $40$, $80$ (after slides 156--158). Tick $10$ is omitted for space.}
+\label{fig:mlfq}
+\end{figure}
+
+\begin{example}[MLFQ at Work]
+  \label{ex:mlfq}
+  \Cref{fig:mlfq} shows three scenarios.
+  \begin{enumerate}
+    \item \emph{A single long-running job.} A uses up its slice at every level and sinks to priority $0$, where it receives slices of $80$. Long-running jobs get a large time slice, which reduces context switching.
+    \item \emph{Along came a short job.} B arrives at time $150$ and needs $30$. It enters at priority $3$, preempting A, and finishes within two levels at time $180$, after which A resumes. Short jobs run first---MLFQ approximates SJF without knowing job lengths in advance.
+    \item \emph{What about I/O?} B is I/O-bound: it uses the CPU for $1$ unit at a time and then waits for I/O. Since it always gives up the CPU before its slice is up, it stays at priority $3$ and gets the CPU as soon as it wants it. I/O-bound jobs have a higher priority to access the CPU.
+  \end{enumerate}
+\end{example}
+
+The scheme has two limitations. Long-running jobs may starve if there are too many interactive jobs. And a program may change its behavior over time: a job that computes for a long time when it starts and becomes interactive afterwards has already sunk to the bottom and is punished forever. Both are fixed by a \emph{priority boost}: after some time period, move all jobs to the highest priority.
+
+\begin{keypoint}[The Rules of MLFQ]
+  \begin{enumerate}
+    \item If $\text{Priority}(A) > \text{Priority}(B)$, A runs (B does not).
+    \item If $\text{Priority}(A) = \text{Priority}(B)$, A and B run round-robin using the time slice of their queue.
+    \item When a job enters the system, it is placed at the highest priority (the topmost queue).
+    \item Once a job uses up its time slice at a given level, its priority is reduced (it moves down one queue).
+    \item After some time period, move all the jobs in the system to the topmost queue.
+  \end{enumerate}
+\end{keypoint}
+
+MLFQ observes how jobs behave over time and prioritizes them accordingly. It delivers excellent overall performance, similar to SJF and PSJF, for short-running interactive jobs, and it is fair and makes progress for long-running CPU-intensive workloads. Many modern operating systems therefore use a form of MLFQ as their base scheduler.
+
+\begin{keypoint}[Summary]
+  There is no best or standard scheduling algorithm, partly because we cannot predict the CPU requirement of a process, we do not even know whether a job will eventually terminate, and online scheduling is NP-hard. Linux has used the \emph{Completely Fair Scheduler} (CFS), a dynamic priority algorithm based on red-black trees, since kernel 2.6.23.
+\end{keypoint}
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:sched-further}
+
+\paragraph{Why SJF is optimal.} When all jobs arrive together and their lengths are known, nonpreemptive SJF minimizes the average wait time, and hence the average turnaround time. Exchange argument: if a longer job runs immediately before a shorter one, swapping the two shortens the short job's wait by more than it lengthens the long job's, strictly reducing the total. An optimal schedule therefore has no ``long before short'' adjacent pair. With staggered arrivals, PSJF---also called shortest remaining time first (SRTF)---is optimal for average turnaround time.
+
+\paragraph{SJF needs to know the future.} Real systems do not know how long a job will run. The classic remedy predicts the next CPU burst by exponential averaging of past bursts, $\tau_{n+1} = \alpha t_n + (1 - \alpha)\tau_n$, where $t_n$ is the length of the $n$-th burst. MLFQ sidesteps prediction: it observes instead of guessing.
+
+\paragraph{A typo on slide 139.} The numerator of the average turnaround time reads $100 + 110 + 120$; the turnaround times are $A = 100$, $B = 100$, $C = 110$, and $(100 + 100 + 110)/3 = 103.33$. The result on the slide is correct.
+
+\paragraph{Why CPU utilization is a poor metric.} A busy CPU is not necessarily doing useful work: context switches, spinning, and page faults all keep it busy. Utilization near $100\%$ may also mean the system is overloaded and response times are degrading.
+
+\paragraph{Gaming rule 4.} Under ``drop a level once the time slice is used up'', a program can issue a pointless I/O just before its slice expires and stay at the top level forever, monopolizing the CPU. OSTEP's fix is to account for the \emph{total} CPU time a job uses at a level: once it exhausts its allotment it moves down, however many times it gave up the CPU in between.
+
+\paragraph{How CFS is ``completely fair''.} CFS has no fixed time slices. It tracks a \emph{virtual runtime} \code{vruntime} per process---actual runtime scaled by a weight derived from the nice value---and always runs the process with the smallest \code{vruntime}. Runnable processes are kept in a red-black tree keyed by \code{vruntime}; the leftmost node, cached, is the next to run, so picking is $O(1)$ and insertion $O(\log n)$. An I/O-bound process accumulates no \code{vruntime} while sleeping and is near the front when it wakes, much like MLFQ's preference for I/O-bound jobs. Since Linux 6.6, CFS has been replaced by the EEVDF (Earliest Eligible Virtual Deadline First) scheduler.
+
+\paragraph{Priorities in Linux.} Ordinary processes are weighted by their \emph{nice value}, from $-20$ (highest) to $19$ (lowest): \code{nice -n 10 ./job}, \code{renice}. Real-time processes use separate policies, \code{SCHED\_FIFO} (FCFS within a priority, no time slice) and \code{SCHED\_RR} (round-robin within a priority), which always take precedence over ordinary processes; \code{chrt} sets them.
+
+\paragraph{State letters in \code{ps}.} \code{R} is running or ready (Linux does not distinguish them; both are on the run queue), \code{S} interruptible sleep, \code{D} uninterruptible sleep, \code{T} stopped (e.g., by \code{SIGTSTP}), and \code{Z} zombie. A process in state \code{D} cannot be killed even with \code{SIGKILL}; the classic case is a process stuck on an unresponsive NFS mount.
+
+\paragraph{Hidden costs of a context switch.} Switching address spaces invalidates the cached translations in the TLB (unless the hardware tags entries with PCID/ASID), and the new process starts with a cold cache. These costs often exceed saving and restoring registers. Switching between \emph{threads} of the same process needs no change of memory map and is therefore cheaper.
+
+\paragraph{Priority inversion.} A low-priority process holds a lock that a high-priority process waits for, while a medium-priority process keeps preempting the low-priority one---so the high-priority process is starved indirectly by the medium one. This repeatedly reset the Mars Pathfinder in 1997. The fix is \emph{priority inheritance}: the lock holder temporarily inherits the priority of the highest-priority waiter.

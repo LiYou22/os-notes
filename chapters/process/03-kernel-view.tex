@@ -1,0 +1,189 @@
+\section{Processes in the Kernel}
+\label{sec:kernel}
+
+The previous sections looked at processes from the programmer's side. This section turns to the kernel: what \emph{is} a process inside the kernel, and how is a system call carried out?
+
+\subsection{Kernel-Space and User-Space Memory}
+
+\begin{definition}[User Space and Kernel Space]
+  System memory is divided into two parts.
+  \begin{center}
+  \begin{tabular}{lll}
+    \toprule
+     & Contents & Accessible by \\
+    \midrule
+    user space & program code, process memory, \dots & user code and kernel code \\
+    kernel space & kernel code and data structures, drivers, \dots & kernel code only \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+\end{definition}
+
+This boundary is the foundation of every protection mechanism in the OS. User programs cannot even address kernel space, while the kernel can access all memory---which is also why a kernel bug is far more serious than a user bug.
+
+\subsection{The Task List}
+
+\begin{definition}[Process Control Block]
+  For each process the kernel keeps a \emph{process control block} (PCB) containing everything related to the process: PID, running time, file descriptors, signal handlers, parent and children, \dots{} In Linux it is \code{struct task\_struct}. All PCBs are linked into a doubly linked list, the \emph{task list}, stored in kernel-space memory.
+\end{definition}
+
+The abstract notion of a process is, concretely, this structure (\Cref{fig:tasklist}); \code{getpid()} merely reads one of its fields.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[font=\small\bfseries] (t) at (0,0) {Process 2436};
+  \node[font=\scriptsize\itshape, below=0pt of t] (ts) {struct task\_struct =};
+  \fieldstack{p}{ts.south}{PID = 2436, Running time, File descriptors, \dots}
+  \begin{scope}[on background layer]
+    \node[fit=(t)(p-4), fill=tsk!70, draw=tskedge, rounded corners=2pt, inner sep=4pt] (P) {};
+  \end{scope}
+  \node[box, fill=tsk!70, minimum width=22mm] (p101) at (3.8,0) {Process 101};
+  \node[box, fill=tsk!70, minimum width=22mm] (p2250) at (7.1,0) {Process 2250};
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}, thick, tskedge] (P.east |- p101) -- (p101);
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}, thick, tskedge] (p101) -- (p2250);
+  \draw[-{Stealth[length=1.6mm]}, thick, tskedge] (p2250) -- ++(1.4,0) node[right, black] {\dots};
+  \node[draw, fill=white, rounded corners=2pt, align=left, font=\scriptsize, anchor=north west]
+    (fd) at (3.2,-1.3) {Array of opened files:\\
+      \textcolor{sigc}{0 --- standard input (\code{stdin})}\\
+      \textcolor{sigc}{1 --- standard output (\code{stdout})}\\
+      \textcolor{sigc}{2 --- standard error (\code{stderr})}\\
+      3 and beyond --- files you opened};
+  \draw[arr] (p-3.east) -- (fd.west |- p-3);
+  \node[font=\scriptsize\itshape, color=cmt] at ($(p101)!0.5!(p2250)+(0,-0.55)$) {doubly linked list};
+  \begin{scope}[on background layer]
+    \node[fit={(P)(fd)(p2250)(t)($(fd.south)+(0,-0.45)$)}, fill=kspace, region, inner sep=10pt] (K) {};
+  \end{scope}
+  \node[anchor=south east, font=\small\itshape] at (K.south east) {Kernel-space memory};
+\end{tikzpicture}
+\caption{The task list. Each \ts{} is a process control block, and its file descriptors index an array of open files (after slide 36).}
+\label{fig:tasklist}
+\end{figure}
+
+\subsection{File Descriptors and Redirection}
+
+\begin{definition}[File Descriptor]
+  The \ts{} holds an array of the process's open files. An index into this array is a \emph{file descriptor} (fd): $0$ is standard input (\code{stdin}), $1$ is standard output (\code{stdout}), $2$ is standard error (\code{stderr}), and files the program opens get descriptors $3$ and beyond.
+\end{definition}
+
+The first three are already set up by the shell when the program starts, which is why the first file you open gets descriptor $3$. Since ``standard output'' is just entry $1$ of the array, \emph{redirecting} it means changing that entry.
+
+\begin{example}[Redirecting \code{stdout} with \code{dup2()}]
+\begin{lstlisting}
+int main() {
+  printf("Hello 2250\n");                    // -> terminal
+
+  int fd = open("output.txt",
+                O_CREAT|O_WRONLY|O_TRUNC,
+                S_IRUSR|S_IWUSR);
+  dup2(fd, 1);    // duplicate the file descriptor onto fd 1
+  close(fd);      // close the unused file descriptor
+
+  printf("Hello 2250 again\n");              // -> output.txt
+}
+\end{lstlisting}
+  After \code{dup2(fd, 1)}, descriptor $1$ refers to \code{output.txt}, and everything written to \code{stdout}---including by \code{printf}, which knows nothing about the change---goes to the file.
+\end{example}
+
+This is exactly how the shell implements \code{./prog > output.txt}: it calls \code{dup2()} in the child after \code{fork()} and before \code{exec()}. Because \code{exec()} preserves the file descriptor table, the new program starts already redirected.
+
+\subsection{Handling System Calls}
+
+A process switches its execution from \emph{user mode} to \emph{kernel mode} by invoking a system call, and switches back when the call returns. It is the same process changing execution mode, not a different process: the program counter still belongs to it, but now points into kernel code with access to kernel space.
+
+\begin{definition}[System Call]
+  Each system call has a unique \emph{syscall number}. To make a system call, a process places the number in a designated CPU register (\code{\%rax} on x86-64) and executes a \emph{TRAP} instruction. The kernel starts executing at the \emph{syscall dispatcher}, which looks up the number in the \emph{syscall table} and invokes the corresponding \emph{handler}. The handler finishes with a \emph{RETURN-FROM-TRAP} instruction, switching back to user mode.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[anchor=north west, font=\scriptsize] (tbl) at (0,0) {%
+    \begin{tabular}{|c|l|}
+      \hline
+      \rowcolor{kspace}\textbf{Syscall \#} & \textbf{Syscall handler} \\ \hline
+      0 & \texttt{sys\_read()} \\ \hline
+      1 & \texttt{sys\_write()} \\ \hline
+      \dots & \dots \\ \hline
+      39 & \texttt{sys\_getpid()} \\ \hline
+      \dots & \dots \\ \hline
+    \end{tabular}};
+  \node[anchor=south west, font=\small\itshape, color=tskedge] at (tbl.north west) {syscall\_table[]};
+  \node[field, minimum width=24mm] (pc) at (6.2,-2.0) {Program counter};
+  \node[field, minimum width=24mm, below=1mm of pc] (num) {Syscall number};
+  \node[font=\small\bfseries, above=1mm of pc] (cpu) {CPU};
+  \begin{scope}[on background layer]
+    \node[fit=(pc)(num)(cpu), fill=initc!25, draw=initc!70, rounded corners=3pt] {};
+  \end{scope}
+  \node[font=\small\bfseries] (sm) at (10,0.3) {System memory};
+  \node[font=\scriptsize\bfseries] (us) at (10,-0.2) {User space};
+  \fieldstack[seg]{u}{us.south}{Code, Data, Heap, \dots, Stack}
+  \node[font=\scriptsize\bfseries, below=2mm of u-5] (ks) {Kernel space};
+  \fieldstack{k}{ks.south}{Syscall dispatcher, Syscall table, \code{sys\_getpid()} handler, \ts}
+  \begin{scope}[on background layer]
+    \node[fit=(us)(u-5), fill=uspace, draw=parentc, inner sep=3pt] {};
+    \node[fit=(ks)(k-4), fill=kspace, draw=kernc, inner sep=3pt] {};
+  \end{scope}
+  \draw[arr] (pc.east) -- node[above, sloped, font=\scriptsize]{(1) TRAP} (k-1.west);
+  \draw[arr, kernc] (k-1.east) to[bend left=50] node[right, font=\scriptsize]{(2)} (k-2.east);
+  \draw[arr, kernc] (k-2.east) to[bend left=50] (k-3.east);
+  \draw[arr, kernc] (k-3.east) to[bend left=50] node[right, font=\scriptsize]{(3)} (k-4.east);
+\end{tikzpicture}
+\caption{Handling \code{getpid()} (after slides 39--41): (1) trap into the dispatcher; (2) look up syscall number $39$ in the syscall table; (3) \code{sys\_getpid()} reads the PID from the \ts{}, then returns from the trap.}
+\label{fig:syscall}
+\end{figure}
+
+\begin{example}[\code{getpid()}]
+  Follow \Cref{fig:syscall}. The CPU is running the process in user mode. The process puts the syscall number of \code{getpid()}, $39$, into the register and executes TRAP. The dispatcher finds entry $39$ in the table and calls \code{sys\_getpid()}, which reads the PID from the process's \ts{} and executes RETURN-FROM-TRAP.
+\end{example}
+
+\begin{keypoint}
+  User code cannot jump to arbitrary kernel addresses. TRAP enters the kernel at a single place, the dispatcher, and the kernel decides which handler runs. The syscall table is the strictly limited list of entry points the kernel opens to user space.
+\end{keypoint}
+
+\subsection{Process Time}
+
+Since execution is divided between user mode and kernel mode, so is the running time of a process:
+\begin{equation}
+  \text{running time} = \text{user time} + \text{system time}.
+\end{equation}
+\emph{User time} is spent executing the program's own code; \emph{system time} is spent executing system calls in the kernel. Some system calls, I/O in particular, can take a long time.
+
+\begin{example}[The \code{time} Command]
+  The two programs below are equivalent, but the first makes ten times as many \code{write()} system calls (\code{stdout} is line-buffered):
+\begin{lstlisting}
+// time1.c: 1,000,000 iterations, one newline each
+for (int i = 0; i < LOOP_MAX; ++i)
+    printf("\n");
+
+// time2.c: 100,000 iterations, ten newlines each
+for (int i = 0; i < LOOP_MAX / 10; ++i)
+    printf("\n\n\n\n\n\n\n\n\n\n");
+\end{lstlisting}
+  \begin{center}
+  \begin{tabular}{lrr}
+    \toprule
+     & \code{time ./time1} & \code{time ./time2} \\
+    \midrule
+    \code{real} (wall clock) & 10.045 s & 6.808 s \\
+    \code{user} & 0.204 s & 0.090 s \\
+    \code{sys} & 3.793 s & 2.218 s \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+\end{example}
+
+Two conclusions follow. First, system calls significantly affect performance: \code{sys} dwarfs \code{user}, so the time goes into entering the kernel rather than into the program's own logic. Second, \code{real} is much larger than \code{user} $+$ \code{sys}; the difference is time the process spends \emph{off} the CPU, descheduled or blocked on I/O. This is also the point of buffering: batching many small writes into one large write reduces the number of kernel entries.
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:kernel-further}
+
+\paragraph{vDSO: system calls without entering the kernel.} Calls such as \code{gettimeofday()} and \code{clock\_gettime()} are frequent and read-only, and a full TRAP is too expensive for them. Linux maps their code and data into the user space of every process (the virtual dynamic shared object), so calling them involves no mode switch. \code{ldd} on any program shows \code{linux-vdso.so.1}.
+
+\paragraph{\code{syscall} replaced \code{int 0x80}.} Early x86 entered the kernel through the software interrupt \code{int 0x80}, which is slow. x86-64 added the dedicated \code{syscall}/\code{sysret} instructions, which skip the interrupt descriptor table lookup. ``TRAP'' is the generic name for this class of mechanism.
+
+\paragraph{Two levels of open files.} The fd array in the \ts{} only holds pointers into the kernel's global \emph{open-file table}, whose entries store the file offset. \code{fork()} copies the fd array, so parent and child share the same entries and therefore the same offset; two independent \code{open()} calls on one file create two independent entries. \Cref{ex:shared-file} relies on this.
+
+\paragraph{Why \code{close(fd)} after \code{dup2}.} After \code{dup2}, both \code{fd} and $1$ refer to the file. Leaving \code{fd} open is harmless for correctness but wastes a descriptor; descriptors are limited (\code{ulimit -n}), and a long-running server would leak them.
+
+\paragraph{The mode boundary is enforced by hardware.} x86 implements user and kernel mode with privilege rings $0$--$3$, and each page table entry records whether user mode may access the page. A user access to kernel memory is therefore rejected by the CPU during address translation, not detected by the OS afterwards---one source of segmentation faults.

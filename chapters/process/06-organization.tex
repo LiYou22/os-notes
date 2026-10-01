@@ -1,0 +1,233 @@
+\section{Process Organization}
+\label{sec:org}
+
+This section answers two questions: where does the \emph{first} process come from, and what happens to a child whose parent dies first? Together the answers give the organization of processes in Linux: a single tree rooted at \code{init}.
+
+\subsection{Booting the Computer}
+
+At a high level, booting takes three steps:
+\begin{enumerate}
+  \item the BIOS finds the boot device;
+  \item the boot code on the boot device is executed;
+  \item the boot code starts the operating system.
+\end{enumerate}
+
+\begin{definition}[BIOS]
+  The \emph{BIOS} (Basic Input/Output System) is \emph{firmware}, i.e., software providing low-level control of the hardware. It is stored in a ROM or flash chip on the motherboard, runs first when the machine is powered on, checks all attached devices, and finds the boot device. Newer systems replace it with \emph{UEFI} (Unified Extensible Firmware Interface), a complete boot manager.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    bseg/.style={draw, minimum height=17mm, align=center, font=\scriptsize, inner sep=2pt}]
+  \node[bseg, fill=tsk, minimum width=11mm, anchor=west] (bc) at (0,0) {Boot\\code};
+  \node[bseg, fill=uspace!60!kspace, minimum width=14mm, anchor=west] (pt) at (bc.east) {Partition\\table};
+  \node[bseg, fill=greybg, minimum width=24mm, anchor=west] (p1) at (pt.east) {Partition};
+  \node[bseg, fill=kspace, minimum width=52mm, anchor=west] (bp) at (p1.east) {};
+  \node[bseg, fill=greybg, minimum width=24mm, anchor=west] (p2) at (bp.east) {Partition};
+  \node[font=\scriptsize] at ([yshift=-3.5mm]bp.north) {Bootable partition};
+  \node[draw, fill=parentc!45, font=\scriptsize, minimum width=18mm] (bl) at ([xshift=-12mm, yshift=-1mm]bp.center) {Boot loader};
+  \node[draw, fill=childc!40, font=\scriptsize, minimum width=18mm] (ki) at ([xshift=12mm, yshift=-3mm]bp.center) {Kernel image};
+  \draw[arr, accent] (bc.south) to[bend right=40] node[below, font=\scriptsize]{2} (pt.south);
+  \draw[arr, accent] (pt.south) to[bend right=25] node[below, font=\scriptsize]{3} (bl.south);
+  \draw[arr, accent] (bl.south east) to[bend right=40] node[below, font=\scriptsize]{4} (ki.south);
+\end{tikzpicture}
+\caption{The boot device (after slide 99). The numbers refer to the steps in the text.}
+\label{fig:boot}
+\end{figure}
+
+On the boot device (\Cref{fig:boot}):
+\begin{enumerate}
+  \item the boot code in the boot device's first sector is executed;
+  \item the boot code reads the partition table and locates the bootable partition;
+  \item the boot loader in the bootable partition is executed;
+  \item the boot loader starts the OS kernel.
+\end{enumerate}
+The boot loader (e.g., GRUB) locates and boots the kernel image, which is just a file:
+\begin{center}
+\begin{tabular}{ll}
+  Linux & \code{/boot/vmlinuz-*} \\
+  macOS & \code{/System/Library/Kernels/kernel} \\
+  Windows & \code{C:\textbackslash Windows\textbackslash System32\textbackslash ntoskrnl.exe} \\
+\end{tabular}
+\end{center}
+The kernel then initializes the memory layout, the device drivers, and so on, and creates the first process.
+
+\subsection{The First Process}
+
+\begin{definition}[\code{init}]
+  During booting, the kernel creates the first process, \code{/sbin/init}, with PID $1$. Newer Linux systems replace \code{init} with systemd; the difference can be ignored in this course.
+\end{definition}
+
+\code{init} creates further processes with \code{fork()} and \code{execve()}, reading its configuration in \code{/etc/rc.d} to decide which programs to run. \code{pstree} shows the resulting process tree. \code{init} keeps running in the background until the system shuts down; the next section explains why it must.
+
+\subsection{Orphans}
+
+\begin{definition}[Orphan and Reparenting]
+  A process whose parent has terminated is an \emph{orphan}. \code{init} automatically adopts all orphan processes; this is called \emph{reparenting}.
+\end{definition}
+
+Consider the chain \code{init} $\to$ shell $\to$ program: if the shell terminates first, the program becomes an orphan and \code{init} adopts it. Without reparenting the orphan would have no parent and the process tree would break into a forest; reparenting keeps it a single tree.
+
+\begin{example}[Observing Reparenting]
+\begin{lstlisting}
+int main() {
+  if (fork() == 0) {
+    // child process
+    printf("My parent's PID is %d\n", getppid());
+    sleep(2);
+    printf("My parent's PID is %d\n", getppid());
+  } else {
+    // parent process
+    sleep(1);
+  }
+  // both processes
+  printf("Terminated\n");
+}
+\end{lstlisting}
+\begin{lstlisting}[style=sh]
+$ ./orphan
+My parent's PID is 2436
+Terminated
+$ My parent's PID is 1
+Terminated
+\end{lstlisting}
+  When the child prints for the first time, the parent is alive and the PPID is 2436. After one second the parent prints \code{Terminated} and exits; the shell was waiting for the parent, so it prints its prompt. After two seconds the child wakes up as an orphan adopted by \code{init}, so the PPID is now $1$. Its output appears \emph{after} the prompt because the shell is not waiting for it.
+\end{example}
+
+\subsubsection{What Happens in the Kernel}
+
+When the parent calls \code{exit()}, the kernel deals with its children before \code{exit()} returns; the parent will never run again. Recall from \Cref{sec:internals} that every \ts{} has a Parent pointer and a list of children. Reparenting changes two pointers (\Cref{fig:reparent}): the child's Parent pointer is redirected to \code{init}, and the child is appended to \code{init}'s list of children.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[font=\scriptsize\bfseries, align=center, minimum height=8mm] (it) at (0,0) {Process 1 (\code{init})};
+  \node[font=\scriptsize\itshape, below=0pt of it] (is) {struct task\_struct =};
+  \fieldstack{i}{is.south}{PID = 1, Parent = NULL, List of children}
+  \node[font=\scriptsize\bfseries, align=center, minimum height=8mm, text=zombc] (pt) at (4.3,0) {Process 2436 (parent)\\becomes zombie};
+  \node[font=\scriptsize\itshape, below=0pt of pt, text=zombc] (ps) {struct task\_struct =};
+  \fieldstack[field, fill=greybg, text=zombc]{p}{ps.south}{PID = 2436, Parent, List of children}
+  \node[font=\scriptsize\bfseries, align=center, minimum height=8mm] (ct) at (8.6,0) {Process 2437 (child)};
+  \node[font=\scriptsize\itshape, below=0pt of ct] (cs) {struct task\_struct =};
+  \fieldstack{c}{cs.south}{PID = 2437, Parent, List of children}
+  \begin{scope}[on background layer]
+    \node[fit=(it)(i-3), fill=tsk!70, draw=black!40, rounded corners=2pt, inner sep=4pt] (iB) {};
+    \node[fit=(pt)(p-3), fill=greybg, draw=black!40, rounded corners=2pt, inner sep=4pt] (pB) {};
+    \node[fit=(ct)(c-3), fill=tsk!70, draw=black!40, rounded corners=2pt, inner sep=4pt] (cB) {};
+  \end{scope}
+  \draw[arr, zombc] (p-2.west) -- (i-2.east);
+  \draw[arr] (i-3.east) -- (p-3.west);
+  \draw[arr, zombc] (p-3.east) -- (c-3.west);
+  \draw[arr, sigc] (c-2.west) to[out=165, in=15] (i-1.east);
+  \draw[arr, sigc] (i-3.south) to[out=-25, in=-155] (c-3.south);
+  \begin{scope}[on background layer]
+    \node[fit={(iB)(cB)(pB)($(p-3.south)+(0,-1.3)$)}, fill=kspace, region, inner sep=10pt] (K) {};
+  \end{scope}
+  \node[anchor=south east, font=\small\itshape] at (K.south east) {Kernel-space memory};
+\end{tikzpicture}
+\caption{Reparenting in the kernel (after slide 107). Grey: links of the exiting parent. Red: the child's Parent pointer now points to \code{init}, and \code{init}'s list of children gains process 2437.}
+\label{fig:reparent}
+\end{figure}
+
+\subsubsection{Reaping the Exited Parent}
+
+One question remains: the exited parent is now a zombie itself, and must be reaped by \emph{its} parent, which is \code{init}. The mechanism is the one of \Cref{sec:internals}: during \code{exit()} the kernel sends \code{SIGCHLD} to \code{init}, which calls \code{wait()} or \code{waitpid()} to reap the zombie. When the child eventually exits, its new parent \code{init} reaps it in the same way (\Cref{fig:init-reap}).
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \timeaxis{5.4}{3.1}
+  \node[lane, initc] at (-0.1,2.7) {\code{init}};
+  \node[lane, parentc] at (-0.1,1.8) {Parent};
+  \node[lane, kernc] at (-0.1,1.4) {Kernel};
+  \node[lane, childc] at (-0.1,0.45) {Child};
+  \draw[run, initc] (0,2.7) -- (5,2.7);
+  \draw[run, parentc] (0,1.8) -- (1.4,1.8);
+  \draw[run, kernc] (1.4,1.4) -- (2.8,1.4);
+  \draw[run, zombc] (2.8,1.8) -- (5,1.8) node[pos=0.6, above, tl, color=black]{zombie};
+  \draw[run, childc] (0,0.45) -- (5,0.45);
+  \draw[sig] (2.5,1.4) -- node[right, tl, sigc, pos=0.8]{\code{SIGCHLD}} (2.5,2.6);
+  \draw[evt] (1.4,1.8) -- (1.4,2.05) node[above, tl]{\code{exit()} invoked};
+  \draw[evt] (2.8,1.4) -- (2.8,1.05) node[below, tl]{\code{exit()} returns};
+\end{tikzpicture}\hspace{10mm}%
+\begin{tikzpicture}[node distance=6mm]
+  \node[font=\scriptsize, anchor=west] at (0,0.6) {Before:};
+  \node[pill, fill=initc!30, minimum width=13mm, font=\scriptsize\ttfamily, anchor=west] (i1) at (0,0) {init};
+  \node[pill, fill=parentc!35, minimum width=13mm, font=\scriptsize, right=of i1] (p1) {Parent};
+  \node[pill, fill=childc!35, minimum width=13mm, font=\scriptsize, right=of p1] (c1) {Child};
+  \draw[arr] (i1) -- (p1); \draw[arr] (p1) -- (c1);
+  \node[font=\scriptsize, anchor=west] at (0,-0.9) {After:};
+  \node[pill, fill=initc!30, minimum width=13mm, font=\scriptsize\ttfamily, anchor=west] (i2) at (0,-1.9) {init};
+  \node[pill, fill=greybg, text=zombc, minimum width=13mm, font=\scriptsize] (p2) at (3.0,-1.4) {Parent};
+  \node[pill, fill=childc!35, minimum width=13mm, font=\scriptsize] (c2) at (3.0,-2.4) {Child};
+  \draw[arr] (i2.east) -- (p2.west); \draw[arr] (i2.east) -- (c2.west);
+\end{tikzpicture}
+\caption{The parent's \code{exit()} sends \code{SIGCHLD} to \code{init}, which reaps the zombie; the child now hangs directly under \code{init} (after slide 108).}
+\label{fig:init-reap}
+\end{figure}
+
+\subsubsection{How \texorpdfstring{\code{init}}{init} Reaps Zombies}
+
+\begin{example}[A Loop That Does Not Work]
+\begin{lstlisting}
+int main() {
+  ...
+  for (;;) {
+    waitpid(...);
+  }
+  // other work: never reached
+}
+\end{lstlisting}
+  \code{waitpid()} blocks, so \code{init} is stuck in the loop and never gets to its other work.
+\end{example}
+
+\begin{example}[Reaping in a \code{SIGCHLD} Handler]
+\begin{lstlisting}
+void handler(int sig) {
+  waitpid(...);
+}
+
+int main() {
+  ...
+  signal(SIGCHLD, handler);
+  // other work
+}
+\end{lstlisting}
+  Now \code{init} is not blocked. It does its own work, and whenever a child exits, \code{SIGCHLD} interrupts it and the handler reaps the zombie.
+\end{example}
+
+\subsection{Observations}
+
+\begin{keypoint}
+  Processes in Linux are organized as a single tree. Thanks to reparenting every process has a parent, so all processes trace back to \code{init}. (Windows maintains a forest-like hierarchy; this course focuses on Unix and Linux.)
+\end{keypoint}
+
+Reparenting also lets a process run without its parent shell, which is why a background job survives logout:
+\begin{lstlisting}[style=sh]
+$ ./loop &
+[1] 2250
+$ logout
+Connection to linserv1 closed.
+
+# after logging in again
+$ ps -C loop
+  PID TTY          TIME CMD
+ 2250 ?        00:00:00 loop
+\end{lstlisting}
+The \code{TTY} column now shows \code{?}: \code{loop} no longer has a controlling terminal, but it is alive, and its parent is \code{init}.
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:org-further}
+
+\paragraph{Loop with \code{WNOHANG} in the handler.} Since standard signals do not queue (\Cref{sec:signals-further}), several children exiting almost simultaneously may raise a single \code{SIGCHLD}. The handler therefore loops, \code{while (waitpid(-1, NULL, WNOHANG) > 0);}, where $-1$ means any child and \code{WNOHANG} makes \code{waitpid} return immediately, instead of blocking inside the handler, once nothing is left to reap.
+
+\paragraph{What if \code{init} dies?} When PID 1 exits, the Linux kernel panics (``Attempted to kill init!''), another reason \code{init} must run until shutdown. For the same reason \code{init} is not killed by signals for which it has not installed a handler; even \code{kill -9 1} has no effect on the host.
+
+\paragraph{Orphans are not always adopted by PID 1.} Since Linux 3.4 a process can declare itself a \emph{subreaper} with \code{prctl(PR\_SET\_CHILD\_SUBREAPER)}; orphaned descendants are then adopted by it instead. \code{systemd --user} and container runtimes do this, so on a desktop Linux system the second PPID printed by \code{orphan.c} may not be $1$.
+
+\paragraph{PID 1 in containers.} The first process in a Docker container is the \code{init} of its PID namespace and must reap zombies. If it is an ordinary program that never calls \code{wait()}, zombies accumulate. Moreover, PID 1 ignores signals such as \code{SIGTERM} for which it has no handler, so \code{docker stop} waits for the timeout. This is why \code{docker run --init} (tini) exists.
+
+\paragraph{\code{SIGHUP} and logout.} When a terminal disconnects, the kernel sends \code{SIGHUP} to the session leader (the shell), and bash forwards it to all jobs; the default action of \code{SIGHUP} is to terminate. The example above survives because bash does not send \code{SIGHUP} to jobs on a normal \code{logout} (\code{huponexit} is off by default). To detach from the terminal reliably, use \code{nohup}, \code{disown}, or \code{setsid}.
+
+\paragraph{UEFI does not use the first sector.} The boot-code-plus-partition-table flow above is the legacy BIOS/MBR one. UEFI reads a \code{.efi} boot loader directly from the FAT-formatted EFI System Partition (ESP), together with a GPT partition table.
