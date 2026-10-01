@@ -23,13 +23,14 @@
 \markright{}
 {\Large\bfseries Acknowledgements\par}
 \vspace{6pt}
-These notes follow the Fall 2026 lectures of CSCI-GA 2250-002 (Operating Systems) at the Courant Institute, taught by Dr.\ Yang Tang. Each chapter follows one slide deck; \Cref{ch:proc} currently covers slides 2--162 of \emph{2 --- Process Management}. Sections marked (SUPPLEMENT) go beyond the slides and draw on Bryant and O'Hallaron~\cite{CSAPP}, Arpaci-Dusseau~\cite{OSTEP}, and Tanenbaum and Bos~\cite{MOS}.
+These notes follow the Fall 2026 lectures of CSCI-GA 2250-002 (Operating Systems) at the Courant Institute, taught by Dr.\ Yang Tang. Each chapter follows one slide deck: \Cref{ch:intro} covers \emph{1 --- Introduction}, and \Cref{ch:proc} currently covers slides 2--162 of \emph{2 --- Process Management}. Sections marked (SUPPLEMENT) go beyond the slides and draw on Bryant and O'Hallaron~\cite{CSAPP}, Arpaci-Dusseau~\cite{OSTEP}, and Tanenbaum and Bos~\cite{MOS}.
 
 \paragraph{Notation.} Code, commands, and file names are set in \code{typewriter}. A call such as \code{fork()} refers to the function; \code{man 2 fork} refers to section~2 of the manual (system calls), and section~3 holds library functions. Shell sessions begin with the prompt \code{\$}. PIDs in the examples (2436, 2437, \dots) follow the slides. Figures captioned ``after slide $n$'' redraw the corresponding slide; in timelines, a solid line means running, a dashed line means blocked or stopped, and a grey line marks a zombie.
 
 \tableofcontents
 
-\include{chapters/ch1-process-management}
+\include{chapters/ch1-introduction}
+\include{chapters/ch2-process-management}
 
 \appendix
 \include{chapters/appA-syscalls}

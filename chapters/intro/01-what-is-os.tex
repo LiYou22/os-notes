@@ -1,0 +1,79 @@
+\section{What Is an Operating System?}
+\label{sec:what-os}
+
+\subsection{Where the OS Fits In}
+
+Between a user and the computer hardware sits the operating system. Its job is to turn ugly hardware into beautiful abstractions. The OS hides the mechanics of the hard disk from you, for example, and lets you manipulate \emph{files} instead.
+
+Users do not deal with the OS directly, though. They deal with \emph{processes}, the running images of programs. You have only one copy of Google Chrome, but you can open several browser windows from the same program file. Everything you run---accessing files, browsing the web, watching videos, playing games, doing the OS labs---runs as a process, which is why much of this course is about the process lifecycle, process management, and related issues.
+
+\subsection{Example: What Happens When You Type \texorpdfstring{\code{ls}}{ls}}
+
+When the user enters \code{ls}, which process runs, how does the OS react, and how does it work with the hardware to get the result back? \Cref{fig:ls} traces the five steps.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[col/.style={minimum height=34mm, anchor=south west, draw, font=\small, inner sep=0pt},
+                    mod/.style={draw, fill=initc!30, font=\scriptsize, minimum width=17mm, minimum height=5mm}]
+  \node[col, fill=tsk, minimum width=22mm] (u) at (0,0) {};
+  \node[col, fill=uspace, minimum width=30mm] (p) at (u.south east) {};
+  \node[col, fill=kspace, minimum width=30mm] (o) at (p.south east) {};
+  \node[col, fill=childc!30, minimum width=30mm] (h) at (o.south east) {};
+  \foreach \n/\t in {u/User, p/Processes, o/Operating System, h/Computer hardware}
+    \node[anchor=south, font=\small] at ([yshift=1.5mm]\n.south) {\t};
+  \node[pill, fill=orange!40, minimum width=11mm, minimum height=5mm, font=\scriptsize] at ([xshift=-7mm, yshift=8mm]p.center) {};
+  \node[pill, fill=orange!40, minimum width=11mm, minimum height=5mm, font=\scriptsize\ttfamily] (ls) at ([xshift=6mm, yshift=1mm]p.center) {ls};
+  \node[pill, fill=orange!40, minimum width=11mm, minimum height=5mm] at ([xshift=-5mm, yshift=-7mm]p.center) {};
+  \node[mod] (mem) at ([yshift=9mm]o.center) {Memory};
+  \node[mod] (fs) at ([yshift=-6mm]o.center) {File system};
+  \node[draw, fill=white, font=\scriptsize, minimum width=14mm, minimum height=6mm] (disk) at ([yshift=-2mm]h.center) {Disk};
+  \node[circle, draw, fill=orange!50, minimum size=6mm] (user) at ([yshift=3mm]u.center) {};
+  \draw[fill=kernc!50] ([yshift=-1mm]user.south) ++(-5mm,-4mm) arc (180:0:5mm) -- cycle;
+  \draw[arr, sigc] (user) -- node[above, font=\scriptsize]{(1)} (ls);
+  \draw[arr, sigc] (ls) -- node[below left=-1mm, font=\scriptsize]{(2)} (fs);
+  \draw[arr, sigc] (fs) -- node[below, font=\scriptsize]{(3)} (disk);
+  \draw[arr, sigc] (disk) -- node[above, font=\scriptsize]{(4)} (mem);
+  \draw[arr, sigc] (mem) -- node[above, font=\scriptsize]{(5)} (ls);
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}, thick, accent] ([yshift=4mm]u.north east) ++(-6mm,0) -- ++(12mm,0)
+    node[above, font=\scriptsize, align=center, pos=0.5, yshift=1mm, color=black] {keyboard, mouse,\\voice, \dots};
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}, thick, accent] ([yshift=4mm]p.north east) ++(-6mm,0) -- ++(12mm,0)
+    node[above, font=\scriptsize, align=center, pos=0.5, yshift=1mm, color=black] {programming interface\\(system calls)};
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}, thick, accent] ([yshift=4mm]o.north east) ++(-6mm,0) -- ++(12mm,0)
+    node[above, font=\scriptsize, align=center, pos=0.5, yshift=1mm, color=black] {machine\\language};
+\end{tikzpicture}
+\caption{The OS between processes and hardware, and the five steps of running \code{ls}; the arrows on top are the three interfaces between neighboring layers (after slides 9--15).}
+\label{fig:ls}
+\end{figure}
+
+\begin{enumerate}
+  \item Most commands typed in the shell start a new process, here one running \code{ls}.
+  \item \code{ls} asks the OS to read the directory. The OS contains the code needed to work with the file system; such code in the OS is called the \emph{kernel}.
+  \item The file system module knows how to work with devices through \emph{device drivers}, and issues I/O requests to the disk.
+  \item The OS allocates memory for the results.
+  \item The memory management subsystem copies the results into the memory of the \code{ls} process, which prints them.
+\end{enumerate}
+
+\begin{definition}[Kernel]
+  The \emph{kernel} is the core of the operating system: the code, together with its data, that manages the hardware and provides services such as file systems, memory management, and process management to processes.
+\end{definition}
+
+\subsection{Two Viewpoints}
+
+\begin{definition}[Operating System]
+  An \emph{operating system} is a piece of software seen from two viewpoints.
+  \begin{itemize}
+    \item \emph{Top-down}: the OS is an \emph{extended machine}. It provides a clean abstraction through which processes access the machine.
+    \item \emph{Bottom-up}: the OS is a \emph{resource manager}. It manages all parts of the system efficiently.
+  \end{itemize}
+\end{definition}
+
+The rest of the course discusses the details of OS design from both angles.
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:what-os-further}
+
+\paragraph{The kernel is not the whole OS.} What ships as ``the operating system'' includes the kernel plus user-space programs: the shell, system libraries such as \code{libc}, \code{init}/systemd, utilities like \code{ls}. Only the kernel runs in kernel mode (\Cref{sec:interact}). The shell, in particular, is an ordinary program (\Cref{sec:abstractions}).
+
+\paragraph{Monolithic kernels and microkernels.} Linux is a \emph{monolithic} kernel: file systems, drivers, memory and process management all run in kernel mode in one address space, which is fast but means a driver bug can crash the whole system. Loadable modules (\code{lsmod}, \code{modprobe}) add code at run time without changing this. A \emph{microkernel} (Mach, seL4, QNX) keeps only scheduling, memory mapping, and message passing in the kernel and runs file systems and drivers as user-space servers, trading speed for isolation. macOS's XNU and Windows NT are hybrids.
+
+\paragraph{Watching the steps happen.} \code{strace ls} prints every system call \code{ls} makes: \code{openat} on the directory, \code{getdents64} to read its entries, \code{write} to print them. It is the user-visible trace of steps (2)--(5) above.

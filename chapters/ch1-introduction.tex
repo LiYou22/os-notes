@@ -1,0 +1,21 @@
+\chapter{Introduction}
+\label{ch:intro}
+
+Supplementary reading:
+\begin{itemize}
+  \item \cite{MOS} Sections 1.1, 1.3, 1.5, and 1.6.
+  \item \cite{OSC} Chapters 1 and 2.
+  \item \cite{OSTEP} Chapter 2.
+  \item \cite{CSAPP} Sections 1.7 and 8.1.
+\end{itemize}
+
+This chapter follows the slide deck \emph{1 --- Introduction}. It answers what an operating system is, shows the ways programs and people interact with it, and previews the abstractions the rest of the course is organized around:
+\begin{itemize}
+  \item \Cref{sec:what-os}: where the OS sits between users and hardware, and what happens when you type \code{ls};
+  \item \Cref{sec:interact}: interrupts, system calls versus library calls, and kernel mode versus user mode;
+  \item \Cref{sec:abstractions}: the four OS abstractions---processes, files, address spaces, and protection---that structure the course.
+\end{itemize}
+
+\input{chapters/intro/01-what-is-os}
+\input{chapters/intro/02-interacting}
+\input{chapters/intro/03-abstractions}

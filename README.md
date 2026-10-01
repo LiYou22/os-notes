@@ -2,7 +2,7 @@
 
 LaTeX notes for CSCI-GA 2250-002 (Operating Systems), NYU Courant, Fall 2026, taught by Dr. Yang Tang. Notes by You Li.
 
-Each chapter follows one slide deck of the course, with one section per topic. Chapter 1, Process Management, currently covers slides 2–162 of *2 — Process Management*. Sections marked (SUPPLEMENT) go beyond the slides; figures captioned "after slide n" redraw the corresponding slide in TikZ. Supplements draw on Bryant & O'Hallaron, *Computer Systems: A Programmer's Perspective*; Arpaci-Dusseau, *Operating Systems: Three Easy Pieces*; and Tanenbaum & Bos, *Modern Operating Systems*.
+Each chapter follows one slide deck of the course, with one section per topic. Chapter 1 covers *1 — Introduction*; Chapter 2, Process Management, currently covers slides 2–162 of *2 — Process Management*. Sections marked (SUPPLEMENT) go beyond the slides; figures captioned "after slide n" redraw the corresponding slide in TikZ. Supplements draw on Bryant & O'Hallaron, *Computer Systems: A Programmer's Perspective*; Arpaci-Dusseau, *Operating Systems: Three Easy Pieces*; and Tanenbaum & Bos, *Modern Operating Systems*.
 
 ## Layout
 
@@ -10,7 +10,12 @@ Each chapter follows one slide deck of the course, with one section per topic. C
 main.tex          title page, notation, bibliography; includes the chapters
 osnotes.sty       page layout, boxed definition/key-point environments, figure styles
 chapters/
-  ch1-process-management.tex   Chapter 1: reading list, roadmap; inputs the section files below
+  ch1-introduction.tex         Chapter 1: reading list, roadmap; inputs intro/
+  intro/
+    01-what-is-os.tex          where the OS fits, the ls walkthrough, extended machine vs. resource manager
+    02-interacting.tex         interrupts, system calls vs. library calls, kernel/user mode, fopen() walkthrough
+    03-abstractions.tex        processes and the shell, files, address spaces, protection; course map
+  ch2-process-management.tex   Chapter 2: reading list, roadmap; inputs process/
   process/
     01-program-to-process.tex  build pipeline, static/dynamic linking, what a process is
     02-fork-exec.tex           fork(), the exec*() family, system(), wait(), copy-on-write

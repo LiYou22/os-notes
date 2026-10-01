@@ -1,0 +1,153 @@
+\section{Interacting with the OS}
+\label{sec:interact}
+
+\subsection{Three Points of View}
+
+Who interacts with the OS, and how, depends on who you are.
+\begin{itemize}
+  \item \emph{An ordinary user} sees the OS as something that runs programs, through the keyboard, the mouse, voice recognition, and so on. They need not even know what a process is---unless Google Chrome freezes and must be killed.
+  \item \emph{A software engineer} sees the OS as software that lets a program interact with the user, the hardware, or the OS itself, through \emph{system calls}.
+  \item \emph{A hardware engineer} sees the OS as software that hosts \emph{device drivers}. How does the computer handle input and output? What happens when the user types a key?
+\end{itemize}
+
+\subsection{Interrupts}
+
+Answering the last question requires a little computer architecture. The CPU is executing some program code, and its \emph{program counter} register points to the next instruction to be executed. Suddenly someone types a key.
+
+\begin{definition}[Interrupt]
+  A \emph{hardware interrupt} is a signal from a device asking the CPU to interrupt the currently executing code (when permitted) so that the device's event can be processed in a timely manner. Each kind of interrupt has a unique \emph{interrupt number}, and the \emph{interrupt vector} is an array of addresses, indexed by interrupt number, pointing to the \emph{interrupt handlers}.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[draw, fill=white, font=\scriptsize, minimum width=16mm, minimum height=7mm] (kb) at (-3.4,0) {Keyboard};
+  \node[field, minimum width=24mm] (pc) at (0,0) {Program counter};
+  \node[font=\small\bfseries, above=1mm of pc] (cpu) {CPU};
+  \begin{scope}[on background layer]
+    \node[fit=(pc)(cpu), fill=initc!25, draw=initc!70, rounded corners=3pt] (CPU) {};
+  \end{scope}
+  \draw[arr, childc, line width=1.4pt] (kb) -- node[above, font=\scriptsize, color=black]{interrupt} (CPU);
+  \node[draw, fill=uspace, font=\scriptsize, minimum width=12mm] (code) at (3.4,-1.7) {Code};
+  \node[font=\scriptsize] (ivt) at (6.0,2.3) {Interrupt vector};
+  \fieldstack[field, minimum width=13mm, minimum height=5mm]{v}{ivt.south}{0, 1, 2, \dots, 255}
+  \node[draw, fill=kspace, font=\scriptsize, align=center] (dz) at (9.0,1.85) {Divide-by-zero\\interrupt handler};
+  \node[draw, fill=kspace, font=\scriptsize, align=center] (kh) at (9.0,-0.6) {Keyboard\\interrupt handler};
+  \draw[arr, densely dashed] (v-1.east) -- (dz.west |- v-1);
+  \draw[arr, densely dashed] (v-4.east) -- (kh.west);
+  \draw[arr] (pc.east) -- node[below, sloped, font=\scriptsize]{(1) transfer control} (kh.south west);
+  \draw[arr, kernc] (kh.south) to[out=-110, in=0] node[below, font=\scriptsize, pos=0.5]{(2) return} (code.east);
+  \draw[densely dotted] (pc.south) |- (code.west);
+\end{tikzpicture}
+\caption{Handling a keyboard interrupt (after slides 19--23). The CPU looks up the handler in the interrupt vector, transfers control to it, and the handler returns to the interrupted code.}
+\label{fig:interrupt}
+\end{figure}
+
+As \Cref{fig:interrupt} shows, the CPU transfers control to the handler for that interrupt number, the handler processes the interrupt, and finally it returns control to the original code. Seen from the hardware side, then, the programs on a computer are just processes running on top of the OS, and they interact with it through system calls.
+
+\subsection{System Calls}
+
+\begin{definition}[System Call]
+  A \emph{system call} (syscall) looks like an ordinary function call, with one important distinction: its implementation is inside the OS kernel. Invoking a system call \emph{traps} into the kernel. System calls are the programming interface between processes and the kernel.
+\end{definition}
+
+\begin{example}[\code{time()}]
+\begin{lstlisting}
+int add(int a, int b) {
+  return a + b;
+}
+int main() {
+  int s = add(1, 2);        // ordinary function call
+  time_t t = time(NULL);    // system call: traps into the kernel
+}
+\end{lstlisting}
+  A process is running \code{main}. When it calls \code{time()}, it asks the kernel to run the \code{time()} system call; the kernel asks the hardware clock for the current time and returns the result. Note that the kernel is \emph{not} an executing entity of its own: it is a body of compiled code and allocated memory, run by the process that trapped into it.
+\end{example}
+
+System calls are usually primitive and fundamental; \code{time()} just tells you what time it is. An OS provides system calls for process control, file management, device management, information maintenance, communications, and protection. \emph{POSIX} (the Portable Operating System Interface) standardizes a common set. To check whether a function is a system call, consult \code{man syscalls}, the list of Linux system calls (section 2 of the manual).
+
+\subsection{System Calls vs.\ Library Calls}
+
+Which of \code{abs()}, \code{fopen()}, \code{fread()}, \code{malloc()}, \code{memcpy()}, and \code{printf()} are system calls? None of them.
+
+\begin{definition}[Library Function]
+  A \emph{library function} is an ordinary function implemented in a library, not in the kernel. Library functions are compiled and packed into library files: \code{*.so} (shared object) on Linux, \code{*.dylib} (dynamic library) on macOS, and \code{*.dll} (dynamic-link library) on Windows.
+\end{definition}
+
+A library function may itself invoke system calls. \code{fopen()}, implemented in the standard C library (e.g., \code{/lib/libc-2.17.so}), invokes the system call \code{open()}. Why reinvent the wheel? Because system calls are often too primitive and not programmer-friendly. Compare
+\begin{lstlisting}
+open("file.txt", O_CREAT|O_WRONLY|O_TRUNC, S_IRUSR|S_IWUSR);
+fopen("file.txt", "w");
+\end{lstlisting}
+
+\subsection{Kernel Mode and User Mode}
+
+\begin{definition}[Kernel Mode and User Mode]
+  The CPU has (at least) two separate modes of operation. The OS runs in \emph{kernel mode} (a.k.a.\ privileged mode), with complete access to all the hardware and the ability to execute any instruction. All other programs run in \emph{user mode}: only a subset of the machine instructions is available, and they cannot affect control of the machine or do I/O.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[mod/.style={draw, font=\scriptsize, align=center, minimum width=19mm, minimum height=9mm}]
+  \fill[uspace] (-1.4,1.3) rectangle (12.6,3.1);
+  \fill[kspace] (-1.4,-2.7) rectangle (12.6,1.2);
+  \draw[dashed, cmt] (-1.4,1.25) -- (12.6,1.25);
+  \node[anchor=west, font=\small\bfseries, color=parentc!70!black] at (-1.3,2.8) {User mode};
+  \node[anchor=west, font=\small\bfseries, color=kernc] at (-1.3,0.9) {Kernel mode};
+  \node[draw, fill=white, font=\scriptsize, minimum width=18mm, minimum height=8mm] (app) at (1.6,2.1) {Application};
+  \node[draw, fill=termbg, font=\scriptsize\ttfamily, minimum width=26mm, minimum height=8mm] (libc) at (8.0,2.1) {/lib/libc-2.17.so};
+  \node[draw, fill=tsk, font=\small, minimum width=110mm, minimum height=7mm] (sc) at (5.4,0.25) {System calls};
+  \node[mod, fill=childc!35] (dd) at (2.0,-1.3) {Device\\drivers};
+  \node[mod, fill=kspace!60!kernc!40] (fs) at (4.6,-1.3) {File\\systems};
+  \node[mod, fill=jobC!70] (mm) at (7.2,-1.3) {Memory\\management};
+  \node[mod, fill=parentc!35] (pm) at (9.8,-1.3) {Process\\management};
+  \node[font=\small] at (11.7,-1.3) {\dots};
+  \node[draw, fill=greybg, font=\scriptsize, minimum width=12mm, minimum height=7mm] (disk) at (-0.4,-2.1) {Disk};
+  \tikzset{down/.style={arr, sigc}, up/.style={arr, kernc}, n/.style={font=\scriptsize, fill=white, inner sep=1pt}}
+  \draw[down] ([yshift=1.2mm]app.east) -- node[n, pos=0.3]{1} ([yshift=1.2mm]libc.west);
+  \draw[up] ([yshift=-1.2mm]libc.west) -- node[n, pos=0.3]{11} ([yshift=-1.2mm]app.east);
+  \draw[down] ([xshift=-2mm]libc.south) -- node[n]{3} ([xshift=-2mm]libc.south |- sc.north);
+  \draw[up] ([xshift=2mm]libc.south |- sc.north) -- node[n]{10} ([xshift=2mm]libc.south);
+  \draw[down] ([xshift=-2mm]fs.north |- sc.south) -- node[n]{4} ([xshift=-2mm]fs.north);
+  \draw[up] ([xshift=2mm]fs.north) -- node[n]{9} ([xshift=2mm]fs.north |- sc.south);
+  \draw[down] ([yshift=1.2mm]fs.west) -- node[n]{5} ([yshift=1.2mm]dd.east);
+  \draw[up] ([yshift=-1.2mm]dd.east) -- node[n]{8} ([yshift=-1.2mm]fs.west);
+  \draw[down] ([yshift=-1.5mm]dd.south west) -- node[n]{6} ([yshift=1.5mm]disk.east);
+  \draw[up] ([yshift=-1.5mm]disk.east) -- node[n]{7} ([yshift=-3.5mm]dd.south west);
+  \node[font=\scriptsize, anchor=west] at ([xshift=1mm]libc.east) {2: library wrapper};
+\end{tikzpicture}
+\caption{Opening a file with \code{fopen()} (after slides 35--36). Red: the request travels down; blue: the result travels back up.}
+\label{fig:fopen}
+\end{figure}
+
+\begin{example}[\code{fopen()} Across the Mode Boundary]
+  \Cref{fig:fopen} numbers the steps.
+  \begin{enumerate}
+    \item The application calls \code{fopen()} in user mode.
+    \item The C library's wrapper prepares the request.
+    \item It calls \code{open()}, which TRAPs into the OS kernel.
+    \item The kernel allocates kernel data structures and hands the request to the file system.
+    \item The file system asks the device driver to read the file's metadata.
+    \item The driver issues a low-level disk read command.
+    \item The data is stored in memory.
+    \item The driver returns the file's metadata to the file system.
+    \item The file system finishes the open.
+    \item The system call returns the low-level \emph{file descriptor} with RETURN-FROM-TRAP, back in user mode.
+    \item The library returns the high-level \emph{file pointer} (\code{FILE *}) to the application.
+  \end{enumerate}
+\end{example}
+
+\Cref{sec:kernel} looks inside steps 3 and 10: how the kernel finds the right handler for a system call, and what a file descriptor is.
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:interact-further}
+
+\paragraph{Interrupts, traps, and faults.} The slides use ``interrupt'' broadly. A common taxonomy distinguishes \emph{interrupts}, asynchronous events from devices such as the keyboard or the timer; \emph{traps}, synchronous and intentional, such as a system call; and \emph{faults} (exceptions), synchronous and unintentional, such as division by zero or a page fault. All three enter the kernel through the same table. On x86 it is the 256-entry interrupt descriptor table, whose vector $0$ is indeed the divide error; device interrupts are remapped above the first $32$ vectors reserved for exceptions.
+
+\paragraph{The answer to the quiz.} \code{abs()} and \code{memcpy()} make no system call at all. \code{printf()} and \code{fread()} buffer data and call \code{write()} and \code{read()} only when needed; \code{fopen()} calls \code{open()} (\code{openat()} in modern glibc); \code{malloc()} manages the heap itself and calls \code{brk()} or \code{mmap()} only to grow it. \code{man 2} pages are system calls and \code{man 3} pages are library functions.
+
+\paragraph{Seeing system calls.} \code{strace ./prog} lists every system call a program makes, with arguments and return values; \code{ltrace} does the same for library calls. On modern systems the C library is \code{libc.so.6} (glibc 2.34 and later); \code{/lib/libc-2.17.so} on the slides is from CentOS 7.
+
+\paragraph{Why the mode bit is hardware.} If user mode were enforced by software, a program could simply skip the check. Because the CPU itself refuses privileged instructions in user mode and raises an exception instead, the OS can let untrusted programs run directly on the processor at full speed and still keep control. The only way back to kernel mode is through the entry points the kernel installed (the trap and interrupt tables), which is what makes the system call interface a security boundary.
+
+\paragraph{The timer interrupt.} Interrupts are also how the OS regains the CPU from a program that never makes a system call: a hardware timer interrupts periodically and the kernel's handler can switch to another process. Preemptive scheduling (\Cref{sec:sched}) depends on it.

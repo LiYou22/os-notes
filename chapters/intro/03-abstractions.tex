@@ -1,0 +1,150 @@
+\section{OS Abstractions and Course Structure}
+\label{sec:abstractions}
+
+The OS provides four abstractions, and the course is organized around them:
+\begin{center}
+\begin{tabular}{ll}
+  \toprule
+  Abstraction & Parts of the course \\
+  \midrule
+  processes & Part 2: process management; Part 3: process synchronization \\
+  address spaces & Part 4: memory management \\
+  files & Part 5: storage management; Part 6: file system \\
+  security and protection & Part 7: security and protection \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Processes}
+
+Consider the two commands \code{ls} and \code{ls /}. Both use the same program file, \code{/bin/ls}. They differ in their program arguments and in the internal state of their processes, such as running time.
+
+\begin{definition}[Process]
+  A \emph{process} is an execution instance of a program. Multiple processes can execute the same program code, and a process is not bound to execute just one program. A process is an \emph{active} entity: it maintains local state about its execution---which CPU core it runs on, which instruction is next, \dots---and that state changes over time.
+\end{definition}
+
+\Cref{sec:program} returns to the distinction between program and process from the build side.
+
+\begin{definition}[Shell]
+  The \emph{shell}, the Unix command interpreter, is not part of the OS but an important program shipped with it. A shell starts when you log in, and it creates processes: when you enter a command, the shell, as the \emph{parent} process, creates a \emph{child} process that executes the command.
+\end{definition}
+
+The shell itself has a parent, and children may have children of their own, so all processes form a \emph{process tree} (\Cref{sec:org}). On a CIMS compute server:
+\begin{lstlisting}[style=sh]
+$ pstree
+systemd-+-sshd---bash---pstree
+        ...
+\end{lstlisting}
+systemd is the ancestor of all processes, \code{sshd} is the SSH server, and \code{bash} is the shell. Inside a Docker container the tree looks different, since the container is a virtualized environment. The \code{ps} command displays information about processes, including each one's \emph{PID} (process ID), a unique identification number:
+\begin{lstlisting}[style=sh]
+$ ps
+  PID TTY          TIME CMD
+ 2250 pts/23   00:00:00 bash
+ 2436 pts/23   00:00:00 ps
+$ ps aux
+USER   PID %CPU %MEM    VSZ  RSS TTY  STAT START    TIME COMMAND
+root     1  0.0  0.0 194812 8008 ?    Ss   Jan14  121:09 /usr/lib/systemd/systemd
+root     2  0.0  0.0      0    0 ?    S    Jan14    0:27 [kthreadd]
+...
+\end{lstlisting}
+
+On processes, the course covers process-related functions and system calls (how to write a shell yourself, Lab~2), the process lifecycle and scheduling (how processes are created and how their death is handled), process control (how to suspend a process, what Ctrl-C does and how to change it), and process synchronization and deadlocks (how processes communicate and cooperate, Lab~3). \Cref{ch:proc} begins this part.
+
+\subsection{Files}
+
+\begin{definition}[File and File System]
+  A \emph{file} is a logical unit of information created by a process; think of it as an array of bytes, each of which you can read or write. A \emph{file system} (FS) is how the OS uses a storage device to manage files: it maintains files, directories, allocated space, and free space.
+\end{definition}
+
+Examples include APFS, ext4, FAT32, and NTFS. A file system is independent of the OS, and one OS can support several. File systems can be studied from two viewpoints: the \emph{static} view asks how files are stored on the disk, and the \emph{dynamic} view asks how the operations that update files are supported.
+
+\begin{example}[Fundamental File Operations]
+  Of \code{create}, \code{open}, \code{read}, \code{write}, \code{close}, \code{copy}, \code{delete}, \code{rename}, and \code{move}, not all are fundamental. \code{create} is a special case of \code{open}; \code{copy} can be implemented with \code{open}, \code{read}, and \code{write}; and \code{move} within the same file system is just \code{rename}.
+\end{example}
+
+On files, the course covers file-related functions and system calls, file system implementation (how well-known file systems work, why a file system becomes slow, how to recover a deleted file and why that does not always work, Lab~4, why a file can be lost on a physically healthy disk), and disks (what is inside a hard disk drive, and how multiple disks combine for performance, reliability, or both).
+
+\subsection{Address Spaces}
+
+When you run a program, it is loaded from the hard disk into main memory, and during execution its instructions are fetched from main memory into the CPU (\Cref{fig:hierarchy}). There may be a hundred processes running ``at the same time'' with only a few CPU cores; \Cref{sec:sched} explains how.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[pp/.style={draw, rounded corners=2.5mm, fill=orange!40, font=\scriptsize, minimum height=5mm, align=center}]
+  \node[draw, fill=uspace, rounded corners=2pt, minimum width=36mm, minimum height=22mm, label={[font=\small\bfseries]above:CPU}] (cpu) at (0,0) {};
+  \node[draw, fill=initc!30, font=\scriptsize, minimum width=12mm] at ([xshift=-10mm, yshift=4mm]cpu.center) {Registers};
+  \node[draw, fill=initc!30, font=\scriptsize, minimum width=12mm] at ([xshift=10mm, yshift=4mm]cpu.center) {Cache};
+  \node[pp] at ([yshift=-5mm]cpu.center) {Process A (running)};
+  \node[draw, fill=kspace, rounded corners=2pt, minimum width=36mm, minimum height=22mm, label={[font=\small\bfseries]above:Main memory}] (mm) at (5.2,0) {};
+  \node[pp] at ([xshift=-9mm, yshift=5mm]mm.center) {Process B};
+  \node[pp] at ([xshift=9mm, yshift=0mm]mm.center) {Process C};
+  \node[pp] at ([xshift=-7mm, yshift=-6mm]mm.center) {Process D};
+  \node[draw, fill=kernc!30, rounded corners=6pt, minimum width=32mm, minimum height=22mm, label={[font=\small\bfseries]above:Disk}] (dk) at (10.2,0) {};
+  \node[pp] at ([xshift=-6mm, yshift=4mm]dk.center) {Process E};
+  \node[pp] at ([xshift=6mm, yshift=-5mm]dk.center) {Process F};
+  \draw[arr] (mm) -- (cpu);
+  \draw[arr] (dk) -- (mm);
+\end{tikzpicture}
+\caption{The memory hierarchy: programs move from disk to main memory to the CPU, and only a few processes run at any instant (after slide 52).}
+\label{fig:hierarchy}
+\end{figure}
+
+\begin{definition}[Address Space]
+  The \emph{address space} of a process is the range of (virtual) memory addresses it can use. A loader lays out the program in it as \emph{segments}: text (program code), initialized data, uninitialized data, the heap, mapped files, and the stack. This organization is called \emph{segmentation}.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[font=\scriptsize\bfseries] (ct) at (0,0.1) {C program layout};
+  \fieldstack[seg, fill=kspace, minimum width=36mm, minimum height=7mm]{c}{ct.south}{Program code, Constants, Global variables, Dynamically allocated memory, Local variables}
+  \node[draw, ellipse, fill=tsk!80, minimum width=18mm, minimum height=36mm, font=\small] (ld) at (4.1,-1.9) {Loader};
+  \node[font=\scriptsize\bfseries] (at) at (8.2,0.1) {Virtual address space};
+  \fieldstack[seg, fill=uspace, minimum width=27mm]{a}{at.south}{Text, Initialized data, Uninitialized data, Heap, {}, Mapped files, {}, Stack}
+  \node[anchor=east, font=\tiny] at (a-1.north west) {0};
+  \node[draw, fill=parentc!40, font=\small\bfseries, minimum width=13mm, minimum height=9mm] (cpu) at (11.4,-1.9) {CPU};
+  \draw[arr] (c-1.east) -- (a-1.west);
+  \draw[arr] (c-2.east) -- (a-2.west);
+  \draw[arr] (c-3.east) -- (a-2.west);
+  \draw[arr] (c-3.east) -- (a-3.west);
+  \draw[arr] (c-4.east) -- (a-4.west);
+  \draw[arr] (c-5.east) -- (a-8.west);
+  \draw[arr] (a-4.east -| at.east) ++(0.2,0) -- (cpu.west);
+  \begin{scope}[on background layer]
+    \node[draw=parentc, fill=uspace!40, rounded corners=2pt, fit=(at)(a-8), inner sep=3pt] {};
+  \end{scope}
+\end{tikzpicture}
+\caption{A loader maps a C program into the segments of a virtual address space (after slide 53).}
+\label{fig:layout}
+\end{figure}
+
+\Cref{fig:layout} shows which part of a C program goes where. Java seems not to have this layout, but in reality a Java program runs inside the Java virtual machine, which is itself just a process on the OS: \code{new String("hello")} creates an object that is a piece of dynamically allocated memory in the JVM process, obtained with \code{malloc()} and later \code{free()}-ed.
+
+\paragraph{Why C?} Real operating systems are virtually always written in C. C was invented for developing Unix; it is powerful, efficient, and predictable. Linus Torvalds puts it this way: ``If you think like a computer, writing C actually makes sense.'' The flip side is that you must manage memory yourself: use \code{malloc()} and \code{free()} properly, initialize memory before using it, and be careful about bounds (Lab~1)---or meet \code{Segmentation fault}.
+
+On address spaces, the course covers memory-related functions and system calls (why a program segfaults, whether a program that does not segfault manages memory correctly, how to write \code{malloc()} with system calls) and virtual memory (how processes can use more memory than the machine has, why a computer sometimes feels slow, how processes share memory).
+
+\subsection{Security and Protection}
+
+\begin{definition}[Protection]
+  \emph{Protection} is the OS's control over the access of processes or users to the resources defined by the system. The OS must provide means to specify the controls to be imposed and to enforce them.
+\end{definition}
+
+Familiar attacks include viruses, worms, denial-of-service attacks, identity theft, and theft of service. The course covers protection-related functions and system calls (how the OS controls access, what file permissions mean), security best practices (how to store and verify passwords), and hacking (how root privilege is gained, legally and illegally, and how to protect yourself).
+
+\begin{keypoint}[Summary]
+  An operating system is an extended machine that hides hardware behind clean abstractions, and a resource manager that shares the hardware among processes. Processes reach it through system calls, often wrapped by library functions, and the CPU's kernel and user modes keep them from bypassing it. Its four abstractions---processes, address spaces, files, and protection---structure the rest of the course.
+\end{keypoint}
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:abstractions-further}
+
+\paragraph{Why program code can be shared.} The text segment is read-only, so every process running the same program can map the same physical pages; only data, heap, and stack need private copies. Shared libraries rely on the same fact, which is why a hundred processes using \code{libc} need only one copy of its code in memory.
+
+\paragraph{Why addresses start above 0.} The slide places text at about 8K rather than address $0$. Leaving the lowest pages unmapped makes dereferencing a \code{NULL} pointer (or a small offset from it) fault immediately instead of silently reading garbage; Linux enforces a minimum mapping address (\code{vm.mmap\_min\_addr}).
+
+\paragraph{Constants live with the code.} String literals and other constants usually go into a read-only data section (\code{.rodata}) that is mapped together with, or next to, the text segment, so writing to a string literal crashes. Initialized globals go to \code{.data} and zero-initialized ones to \code{.bss}, which takes no space in the executable file.
+
+\paragraph{Kernel threads.} The \code{ps aux} output above lists \code{[kthreadd]} and \code{[ksoftirqd/0]}. These are \emph{kernel threads}: schedulable entities that run only kernel code. They do not contradict ``the kernel is not an executing entity''---most kernel code still runs on behalf of the process that trapped in---but some background work (flushing dirty pages, handling deferred interrupt work) needs a context of its own.
+
+\paragraph{\code{rename} is atomic.} \code{rename(2)} within one file system replaces the target atomically, so other processes see either the old file or the new one, never a partial state. Editors and package managers write a temporary file and \code{rename} it over the original for exactly this reason. Across file systems \code{rename} fails with \code{EXDEV}, and \code{mv} falls back to copy-then-delete.
