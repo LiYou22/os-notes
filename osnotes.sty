@@ -52,14 +52,12 @@
 
 % Headers and footers
 \RequirePackage{fancyhdr}
-\RequirePackage{datetime2}
 \newcommand{\coursename}{CSCI-GA 2250}
 \newcommand{\footernote}{Operating Systems (Dr.\ Yang Tang), NYU Courant, Fall 2026. Notes by You Li.}
 \pagestyle{fancy}
 \fancyhf{}
 \renewcommand{\headrulewidth}{0pt}
 \fancyhead[L]{\small\coursename\quad\parbox[b]{0.56\textwidth}{\raggedright\nouppercase{\rightmark}}}
-\fancyhead[R]{\small\DTMtoday}
 \fancyfoot[L]{\small\footernote}
 \fancyfoot[R]{\small\thepage}
 \renewcommand{\sectionmark}[1]{\markright{\thesection.\ #1}}
