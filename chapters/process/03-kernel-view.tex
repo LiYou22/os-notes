@@ -174,16 +174,3 @@ for (int i = 0; i < LOOP_MAX / 10; ++i)
 \end{example}
 
 Two conclusions follow. First, system calls significantly affect performance: \code{sys} dwarfs \code{user}, so the time goes into entering the kernel rather than into the program's own logic. Second, \code{real} is much larger than \code{user} $+$ \code{sys}; the difference is time the process spends \emph{off} the CPU, descheduled or blocked on I/O. This is also the point of buffering: batching many small writes into one large write reduces the number of kernel entries.
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:kernel-further}
-
-\paragraph{vDSO: system calls without entering the kernel.} Calls such as \code{gettimeofday()} and \code{clock\_gettime()} are frequent and read-only, and a full TRAP is too expensive for them. Linux maps their code and data into the user space of every process (the virtual dynamic shared object), so calling them involves no mode switch. \code{ldd} on any program shows \code{linux-vdso.so.1}.
-
-\paragraph{\code{syscall} replaced \code{int 0x80}.} Early x86 entered the kernel through the software interrupt \code{int 0x80}, which is slow. x86-64 added the dedicated \code{syscall}/\code{sysret} instructions, which skip the interrupt descriptor table lookup. ``TRAP'' is the generic name for this class of mechanism.
-
-\paragraph{Two levels of open files.} The fd array in the \ts{} only holds pointers into the kernel's global \emph{open-file table}, whose entries store the file offset. \code{fork()} copies the fd array, so parent and child share the same entries and therefore the same offset; two independent \code{open()} calls on one file create two independent entries. \Cref{ex:shared-file} relies on this.
-
-\paragraph{Why \code{close(fd)} after \code{dup2}.} After \code{dup2}, both \code{fd} and $1$ refer to the file. Leaving \code{fd} open is harmless for correctness but wastes a descriptor; descriptors are limited (\code{ulimit -n}), and a long-running server would leak them.
-
-\paragraph{The mode boundary is enforced by hardware.} x86 implements user and kernel mode with privilege rings $0$--$3$, and each page table entry records whether user mode may access the page. A user access to kernel memory is therefore rejected by the CPU during address translation, not detected by the OS afterwards---one source of segmentation faults.

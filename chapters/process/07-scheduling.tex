@@ -137,7 +137,7 @@ Without the clock interrupt, a process stuck in an infinite loop would never han
 \begin{itemize}
   \item \emph{high throughput}: maximize the number of jobs per hour;
   \item \emph{short turnaround time}: minimize the time between submission and completion;
-  \item \emph{high CPU utilization}: keep the CPU busy all the time (whether this is a good metric is discussed in \Cref{sec:sched-further}).
+  \item \emph{high CPU utilization}: keep the CPU busy all the time.
 \end{itemize}
 
 \paragraph{Interactive systems.} An interactive system may be a computer with an interactive user or a server with many. Preemption is essential to keep one process from denying service to others. The goals are
@@ -423,26 +423,3 @@ MLFQ observes how jobs behave over time and prioritizes them accordingly. It del
 \begin{keypoint}[Summary]
   There is no best or standard scheduling algorithm, partly because we cannot predict the CPU requirement of a process, we do not even know whether a job will eventually terminate, and online scheduling is NP-hard. Linux has used the \emph{Completely Fair Scheduler} (CFS), a dynamic priority algorithm based on red-black trees, since kernel 2.6.23.
 \end{keypoint}
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:sched-further}
-
-\paragraph{Why SJF is optimal.} When all jobs arrive together and their lengths are known, nonpreemptive SJF minimizes the average wait time, and hence the average turnaround time. Exchange argument: if a longer job runs immediately before a shorter one, swapping the two shortens the short job's wait by more than it lengthens the long job's, strictly reducing the total. An optimal schedule therefore has no ``long before short'' adjacent pair. With staggered arrivals, PSJF---also called shortest remaining time first (SRTF)---is optimal for average turnaround time.
-
-\paragraph{SJF needs to know the future.} Real systems do not know how long a job will run. The classic remedy predicts the next CPU burst by exponential averaging of past bursts, $\tau_{n+1} = \alpha t_n + (1 - \alpha)\tau_n$, where $t_n$ is the length of the $n$-th burst. MLFQ sidesteps prediction: it observes instead of guessing.
-
-\paragraph{A typo on slide 139.} The numerator of the average turnaround time reads $100 + 110 + 120$; the turnaround times are $A = 100$, $B = 100$, $C = 110$, and $(100 + 100 + 110)/3 = 103.33$. The result on the slide is correct.
-
-\paragraph{Why CPU utilization is a poor metric.} A busy CPU is not necessarily doing useful work: context switches, spinning, and page faults all keep it busy. Utilization near $100\%$ may also mean the system is overloaded and response times are degrading.
-
-\paragraph{Gaming rule 4.} Under ``drop a level once the time slice is used up'', a program can issue a pointless I/O just before its slice expires and stay at the top level forever, monopolizing the CPU. OSTEP's fix is to account for the \emph{total} CPU time a job uses at a level: once it exhausts its allotment it moves down, however many times it gave up the CPU in between.
-
-\paragraph{How CFS is ``completely fair''.} CFS has no fixed time slices. It tracks a \emph{virtual runtime} \code{vruntime} per process---actual runtime scaled by a weight derived from the nice value---and always runs the process with the smallest \code{vruntime}. Runnable processes are kept in a red-black tree keyed by \code{vruntime}; the leftmost node, cached, is the next to run, so picking is $O(1)$ and insertion $O(\log n)$. An I/O-bound process accumulates no \code{vruntime} while sleeping and is near the front when it wakes, much like MLFQ's preference for I/O-bound jobs. Since Linux 6.6, CFS has been replaced by the EEVDF (Earliest Eligible Virtual Deadline First) scheduler.
-
-\paragraph{Priorities in Linux.} Ordinary processes are weighted by their \emph{nice value}, from $-20$ (highest) to $19$ (lowest): \code{nice -n 10 ./job}, \code{renice}. Real-time processes use separate policies, \code{SCHED\_FIFO} (FCFS within a priority, no time slice) and \code{SCHED\_RR} (round-robin within a priority), which always take precedence over ordinary processes; \code{chrt} sets them.
-
-\paragraph{State letters in \code{ps}.} \code{R} is running or ready (Linux does not distinguish them; both are on the run queue), \code{S} interruptible sleep, \code{D} uninterruptible sleep, \code{T} stopped (e.g., by \code{SIGTSTP}), and \code{Z} zombie. A process in state \code{D} cannot be killed even with \code{SIGKILL}; the classic case is a process stuck on an unresponsive NFS mount.
-
-\paragraph{Hidden costs of a context switch.} Switching address spaces invalidates the cached translations in the TLB (unless the hardware tags entries with PCID/ASID), and the new process starts with a cold cache. These costs often exceed saving and restoring registers. Switching between \emph{threads} of the same process needs no change of memory map and is therefore cheaper.
-
-\paragraph{Priority inversion.} A low-priority process holds a lock that a high-priority process waits for, while a medium-priority process keeps preempting the low-priority one---so the high-priority process is starved indirectly by the medium one. This repeatedly reset the Mars Pathfinder in 1997. The fix is \emph{priority inheritance}: the lock holder temporarily inherits the priority of the highest-priority waiter.

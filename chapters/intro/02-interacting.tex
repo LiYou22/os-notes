@@ -138,16 +138,3 @@ fopen("file.txt", "w");
 \end{example}
 
 \Cref{sec:kernel} looks inside steps 3 and 10: how the kernel finds the right handler for a system call, and what a file descriptor is.
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:interact-further}
-
-\paragraph{Interrupts, traps, and faults.} The slides use ``interrupt'' broadly. A common taxonomy distinguishes \emph{interrupts}, asynchronous events from devices such as the keyboard or the timer; \emph{traps}, synchronous and intentional, such as a system call; and \emph{faults} (exceptions), synchronous and unintentional, such as division by zero or a page fault. All three enter the kernel through the same table. On x86 it is the 256-entry interrupt descriptor table, whose vector $0$ is indeed the divide error; device interrupts are remapped above the first $32$ vectors reserved for exceptions.
-
-\paragraph{The answer to the quiz.} \code{abs()} and \code{memcpy()} make no system call at all. \code{printf()} and \code{fread()} buffer data and call \code{write()} and \code{read()} only when needed; \code{fopen()} calls \code{open()} (\code{openat()} in modern glibc); \code{malloc()} manages the heap itself and calls \code{brk()} or \code{mmap()} only to grow it. \code{man 2} pages are system calls and \code{man 3} pages are library functions.
-
-\paragraph{Seeing system calls.} \code{strace ./prog} lists every system call a program makes, with arguments and return values; \code{ltrace} does the same for library calls. On modern systems the C library is \code{libc.so.6} (glibc 2.34 and later); \code{/lib/libc-2.17.so} on the slides is from CentOS 7.
-
-\paragraph{Why the mode bit is hardware.} If user mode were enforced by software, a program could simply skip the check. Because the CPU itself refuses privileged instructions in user mode and raises an exception instead, the OS can let untrusted programs run directly on the processor at full speed and still keep control. The only way back to kernel mode is through the entry points the kernel installed (the trap and interrupt tables), which is what makes the system call interface a security boundary.
-
-\paragraph{The timer interrupt.} Interrupts are also how the OS regains the CPU from a program that never makes a system call: a hardware timer interrupts periodically and the kernel's handler can switch to another process. Preemptive scheduling (\Cref{sec:sched}) depends on it.

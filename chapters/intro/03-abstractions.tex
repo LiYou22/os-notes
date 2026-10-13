@@ -135,16 +135,3 @@ Familiar attacks include viruses, worms, denial-of-service attacks, identity the
 \begin{keypoint}[Summary]
   An operating system is an extended machine that hides hardware behind clean abstractions, and a resource manager that shares the hardware among processes. Processes reach it through system calls, often wrapped by library functions, and the CPU's kernel and user modes keep them from bypassing it. Its four abstractions---processes, address spaces, files, and protection---structure the rest of the course.
 \end{keypoint}
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:abstractions-further}
-
-\paragraph{Why program code can be shared.} The text segment is read-only, so every process running the same program can map the same physical pages; only data, heap, and stack need private copies. Shared libraries rely on the same fact, which is why a hundred processes using \code{libc} need only one copy of its code in memory.
-
-\paragraph{Why addresses start above 0.} The slide places text at about 8K rather than address $0$. Leaving the lowest pages unmapped makes dereferencing a \code{NULL} pointer (or a small offset from it) fault immediately instead of silently reading garbage; Linux enforces a minimum mapping address (\code{vm.mmap\_min\_addr}).
-
-\paragraph{Constants live with the code.} String literals and other constants usually go into a read-only data section (\code{.rodata}) that is mapped together with, or next to, the text segment, so writing to a string literal crashes. Initialized globals go to \code{.data} and zero-initialized ones to \code{.bss}, which takes no space in the executable file.
-
-\paragraph{Kernel threads.} The \code{ps aux} output above lists \code{[kthreadd]} and \code{[ksoftirqd/0]}. These are \emph{kernel threads}: schedulable entities that run only kernel code. They do not contradict ``the kernel is not an executing entity''---most kernel code still runs on behalf of the process that trapped in---but some background work (flushing dirty pages, handling deferred interrupt work) needs a context of its own.
-
-\paragraph{\code{rename} is atomic.} \code{rename(2)} within one file system replaces the target atomically, so other processes see either the old file or the new one, never a partial state. Editors and package managers write a temporary file and \code{rename} it over the original for exactly this reason. Across file systems \code{rename} fails with \code{EXDEV}, and \code{mv} falls back to copy-then-delete.

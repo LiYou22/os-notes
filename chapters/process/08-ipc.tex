@@ -189,27 +189,10 @@ Ignoring the pointer loads, it is three steps: \code{a = *count; d = a + 1; *cou
 
 Race conditions are always bad.
 \begin{itemize}
-  \item Compiler optimizations may produce surprising output when code has data races. The compiler assumes that no one else modifies \code{*count} during the loop, so it is free to keep the counter in a register or to rewrite the loop entirely (\Cref{sec:ipc-further}). Data races are undefined behavior (the ``nasal demons'' of C folklore; see \emph{Schrödinger's Code} for an introduction).
+  \item Compiler optimizations may produce surprising output when code has data races. The compiler assumes that no one else modifies \code{*count} during the loop, so it is free to keep the counter in a register or to rewrite the loop entirely. Data races are undefined behavior (the ``nasal demons'' of C folklore; see \emph{Schrödinger's Code} for an introduction).
   \item The computation is nondeterministic, so debugging is no fun at all. A \emph{Heisenbug} is a bug that disappears or changes its behavior when you try to observe it: adding a \code{printf} or running under a debugger changes the timing, and the race no longer shows.
 \end{itemize}
 
 \begin{keypoint}
   A pipe synchronizes for you; shared memory does not. Whenever processes share memory, they must coordinate their accesses themselves, which is the subject of the next section.
 \end{keypoint}
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:ipc-further}
-
-\paragraph{\code{-O0} vs.\ \code{-O2} on my machine.} Compiled with clang on an Apple Silicon Mac, \code{shm.c} prints $1\,437\,397$ and $1\,149\,279$ at \code{-O0}, but $2\,000\,000$ on every run at \code{-O1} and \code{-O2}. The optimized code is one load, one addition of $1\,000\,000$, and one store: the compiler replaced the whole loop by \code{*count += 1000000}, which is legal because it assumes no other process touches \code{*count}. The race is still there, but its window shrank from two million chances to one, so it almost never shows. A program that ``works'' only because the race became unlikely is the worst kind of bug.
-
-\paragraph{How the shell builds \code{ls | less}.} The shell calls \code{pipe(fd)} and then forks twice. The first child calls \code{dup2(fd[1], 1)} so that its standard output is the write end, closes both pipe descriptors, and \code{exec}s \code{ls}; the second calls \code{dup2(fd[0], 0)}, closes both, and \code{exec}s \code{less}. The parent closes both ends and waits. Closing the unused ends matters: \code{read()} on an empty pipe returns $0$ (end of file) only when \emph{every} write end is closed, so a stray open write end makes \code{less} wait forever. Writing to a pipe whose read ends are all closed raises \code{SIGPIPE} (\Cref{sec:signals}). This is the fd-table manipulation of \Cref{sec:kernel} put to work.
-
-\paragraph{Pipe capacity and atomic writes.} On Linux a pipe holds $65\,536$ bytes by default (\code{fcntl(fd, F\_SETPIPE\_SZ, n)} changes it). POSIX guarantees that a write of at most \code{PIPE\_BUF} bytes ($4096$ on Linux) is atomic: if several processes write to the same pipe, such writes are never interleaved with one another. Larger writes may be split.
-
-\paragraph{Named pipes and other IPC mechanisms.} A pipe created by \code{pipe()} has no name, so only related processes (those that inherit its descriptors through \code{fork()}) can use it. A \emph{named pipe} (FIFO), created with \code{mkfifo}, appears in the file system and lets unrelated processes communicate. Beyond those, Unix offers message queues (\code{mq\_open()}), Unix-domain sockets (bidirectional, and able to pass file descriptors between processes), and named shared memory via \code{shm\_open()} plus \code{mmap()}, which unrelated processes can map by name, unlike the anonymous mapping of \Cref{ex:shm}.
-
-\paragraph{Fixing \code{shm.c} with an atomic add.} Replacing \code{++*count} by the GCC/clang builtin
-\begin{lstlisting}
-__atomic_fetch_add(count, 1, __ATOMIC_SEQ_CST);  // atomic_fetch_add() in C11 <stdatomic.h>
-\end{lstlisting}
-\noindent makes the load, add, and store a single indivisible operation, and the program prints $2\,000\,000$ at every optimization level. Atomic instructions are the hardware building block of \Cref{sec:cs}, which develops the general solution for critical sections longer than one instruction.

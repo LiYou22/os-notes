@@ -216,18 +216,3 @@ $ ps -C loop
  2250 ?        00:00:00 loop
 \end{lstlisting}
 The \code{TTY} column now shows \code{?}: \code{loop} no longer has a controlling terminal, but it is alive, and its parent is \code{init}.
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:org-further}
-
-\paragraph{Loop with \code{WNOHANG} in the handler.} Since standard signals do not queue (\Cref{sec:signals-further}), several children exiting almost simultaneously may raise a single \code{SIGCHLD}. The handler therefore loops, \code{while (waitpid(-1, NULL, WNOHANG) > 0);}, where $-1$ means any child and \code{WNOHANG} makes \code{waitpid} return immediately, instead of blocking inside the handler, once nothing is left to reap.
-
-\paragraph{What if \code{init} dies?} When PID 1 exits, the Linux kernel panics (``Attempted to kill init!''), another reason \code{init} must run until shutdown. For the same reason \code{init} is not killed by signals for which it has not installed a handler; even \code{kill -9 1} has no effect on the host.
-
-\paragraph{Orphans are not always adopted by PID 1.} Since Linux 3.4 a process can declare itself a \emph{subreaper} with \code{prctl(PR\_SET\_CHILD\_SUBREAPER)}; orphaned descendants are then adopted by it instead. \code{systemd --user} and container runtimes do this, so on a desktop Linux system the second PPID printed by \code{orphan.c} may not be $1$.
-
-\paragraph{PID 1 in containers.} The first process in a Docker container is the \code{init} of its PID namespace and must reap zombies. If it is an ordinary program that never calls \code{wait()}, zombies accumulate. Moreover, PID 1 ignores signals such as \code{SIGTERM} for which it has no handler, so \code{docker stop} waits for the timeout. This is why \code{docker run --init} (tini) exists.
-
-\paragraph{\code{SIGHUP} and logout.} When a terminal disconnects, the kernel sends \code{SIGHUP} to the session leader (the shell), and bash forwards it to all jobs; the default action of \code{SIGHUP} is to terminate. The example above survives because bash does not send \code{SIGHUP} to jobs on a normal \code{logout} (\code{huponexit} is off by default). To detach from the terminal reliably, use \code{nohup}, \code{disown}, or \code{setsid}.
-
-\paragraph{UEFI does not use the first sector.} The boot-code-plus-partition-table flow above is the legacy BIOS/MBR one. UEFI reads a \code{.efi} boot loader directly from the FAT-formatted EFI System Partition (ESP), together with a GPT partition table.

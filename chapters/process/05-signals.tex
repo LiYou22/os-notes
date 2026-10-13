@@ -194,18 +194,3 @@ The \code{alarm()} system call sets up a one-time asynchronous timer for the pro
 \begin{keypoint}[Summary]
   A signal is a kind of software interrupt with many quirky behaviors. \code{kill()} is not meant to kill anyone; it sends signals. When in doubt, read the man page.
 \end{keypoint}
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:signals-further}
-
-\paragraph{Use \code{sigaction()} in practice.} \code{signal()} is not portable. Under System V semantics the handler is reset to the default after it runs, so it must reinstall itself, leaving a race window; under BSD semantics the handler stays installed and the same signal is blocked while it runs. \code{sigaction()} makes the behavior explicit through flags and is the interface recommended by POSIX. The course uses \code{signal()} for brevity.
-
-\paragraph{Handlers can do very little.} A handler may run between any two instructions of the program, so it may call only \emph{async-signal-safe} functions. Strictly speaking \code{printf()} is not one: it takes locks and touches buffers, and re-entering it from a handler while the main program is inside \code{printf()} corrupts its state. The safe pattern is to set a \code{volatile sig\_atomic\_t} flag and let the main loop act on it. The examples above call \code{printf()} for demonstration only.
-
-\paragraph{Standard signals do not queue.} Pending standard signals are kept as a bitmap, so the same signal arriving three times may be seen once. This is why a \code{SIGCHLD} handler must loop over \code{waitpid}: three children exiting together may trigger the handler once. Real-time signals (\code{SIGRTMIN} and above) are queued.
-
-\paragraph{Signals interrupt blocking system calls.} A process blocked in \code{read()} that receives a handled signal sees \code{read()} return $-1$ with \code{errno} set to \code{EINTR}. Robust code checks for \code{EINTR} and retries; the \code{SA\_RESTART} flag of \code{sigaction()} makes the kernel restart some system calls automatically.
-
-\paragraph{Graceful shutdown uses \code{SIGTERM}.} \code{SIGTERM} can be caught, giving the program a chance to flush buffers, close connections, and finish its logs. \code{SIGKILL} gives no chance at all. Hence \code{docker stop}, \code{systemctl stop}, and Kubernetes first send \code{SIGTERM}, wait for a grace period, and only then send \code{SIGKILL}.
-
-\paragraph{Ctrl-C goes to the whole foreground process group.} The terminal driver sends \code{SIGINT} to every process in the foreground process group, so all three processes of a pipeline \code{a | b | c} receive it. This is why job control puts them in one group.

@@ -245,16 +245,3 @@ So the common pattern of \code{fork()} immediately followed by \code{exec()} cop
 \begin{keypoint}[Summary]
   A process is created by cloning: \code{fork()} copies the caller, and the clone inherits much, but not everything, from its parent. A process is the entity that runs a program, and it may run more than one program in its lifetime: the \code{exec*()} family replaces the program a process runs; it does not create a process. Where the very first process comes from is the subject of \Cref{sec:org}.
 \end{keypoint}
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:fork-further}
-
-\paragraph{\code{fork()} returns twice.} This is its most counterintuitive property, but from the kernel's side it is simple: the kernel duplicates the \ts{} and writes different return values into the two saved register contexts (\Cref{sec:internals}).
-
-\paragraph{\code{wait(NULL)} waits for any one child.} With several children it returns when the first one terminates. To reap all of them, loop until it returns $-1$, or name each child with \code{waitpid(pid, ...)}.
-
-\paragraph{Command injection.} \code{system()} hands its argument to \code{/bin/sh -c}, so any external input spliced into the string may be executed as shell code. When arguments are needed, use \code{fork()} and \code{execv()} and pass them as array elements, which avoids shell parsing altogether.
-
-\paragraph{When the parent exits first.} The child does not die with it; it is adopted by \code{init} or systemd (PID 1). This is why background jobs can outlive the shell (\Cref{sec:org}).
-
-\paragraph{\code{vfork()} and \code{posix\_spawn()}.} Before COW, \code{vfork()} avoided the copy when an \code{exec} was imminent; it is now obsolete and semantically dangerous. \code{posix\_spawn()} is the portable one-step ``create and execute'' interface.

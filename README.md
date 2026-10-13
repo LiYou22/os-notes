@@ -2,7 +2,7 @@
 
 My LaTeX notes for CSCI-GA 2250-002 (Operating Systems) at NYU Courant, Fall 2026, taught by Dr. Yang Tang.
 
-I write one chapter per slide deck and split each chapter into sections by topic. So far there are two chapters: the introduction deck, and Process Management up to slide 245 (through the classical IPC problems). Figures captioned "after slide n" are my TikZ redraws of that slide. Sections marked (SUPPLEMENT) are things I looked up outside the slides, mostly in CS:APP (Bryant & O'Hallaron), OSTEP (Arpaci-Dusseau), and Tanenbaum & Bos.
+I write one chapter per slide deck and split each chapter into sections by topic. So far there are two chapters: the introduction deck, and Process Management up to slide 245 (through the classical IPC problems). Figures captioned "after slide n" are my TikZ redraws of that slide.
 
 ## Files
 

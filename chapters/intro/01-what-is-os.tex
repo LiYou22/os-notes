@@ -68,12 +68,3 @@ When the user enters \code{ls}, which process runs, how does the OS react, and h
 \end{definition}
 
 The rest of the course discusses the details of OS design from both angles.
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:what-os-further}
-
-\paragraph{The kernel is not the whole OS.} What ships as ``the operating system'' includes the kernel plus user-space programs: the shell, system libraries such as \code{libc}, \code{init}/systemd, utilities like \code{ls}. Only the kernel runs in kernel mode (\Cref{sec:interact}). The shell, in particular, is an ordinary program (\Cref{sec:abstractions}).
-
-\paragraph{Monolithic kernels and microkernels.} Linux is a \emph{monolithic} kernel: file systems, drivers, memory and process management all run in kernel mode in one address space, which is fast but means a driver bug can crash the whole system. Loadable modules (\code{lsmod}, \code{modprobe}) add code at run time without changing this. A \emph{microkernel} (Mach, seL4, QNX) keeps only scheduling, memory mapping, and message passing in the kernel and runs file systems and drivers as user-space servers, trading speed for isolation. macOS's XNU and Windows NT are hybrids.
-
-\paragraph{Watching the steps happen.} \code{strace ls} prints every system call \code{ls} makes: \code{openat} on the directory, \code{getdents64} to read its entries, \code{write} to print them. It is the user-visible trace of steps (2)--(5) above.

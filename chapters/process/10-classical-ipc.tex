@@ -478,14 +478,3 @@ The solution is free of data races and deadlocks. Can a customer starve? Every c
     \item be starvation-free.
   \end{itemize}
 \end{keypoint}
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:classic-further}
-
-\paragraph{Ring buffer implementation.} With one producer and one consumer, \code{insert} and \code{remove} on an array of size $N$ are \code{buf[tail] = item; tail = (tail + 1) \% N;} and \code{item = buf[head]; head = (head + 1) \% N;}. The producer touches only \code{tail} and the consumer only \code{head}, and \code{empty}/\code{filled} already keep them from overtaking each other, so with exactly one producer and one consumer the \code{mutex} can be dropped (given a correct memory model, \Cref{sec:cs-further}). With several producers or several consumers it is needed, since two producers would race on \code{tail}.
-
-\paragraph{Breaking the circular wait by ordering resources.} Attempt~1 of the dining philosophers deadlocks because every philosopher picks up chopsticks in the same rotational direction. If every philosopher instead takes the \emph{lower-numbered} chopstick first, philosopher 4 takes chopstick 0 before chopstick 4, the cycle is broken, and no deadlock is possible: a total order on resources rules out circular waits. This is one of the deadlock-prevention strategies that the deck returns to after threads; the resource-ordering solution goes back to Dijkstra, who posed the problem in 1965.
-
-\paragraph{Writers-preference.} To stop writers from starving, add a semaphore that a waiting writer takes to bar \emph{new} readers from entering, plus a \code{writer\_count} protected like \code{reader\_count}: the first waiting writer locks out new readers, the last leaving writer lets them in. Now readers can starve. A fair version puts all arrivals through one FIFO ``turnstile'' semaphore so that each process is served in arrival order. In practice, \code{pthread\_rwlock\_t} provides a readers-writer lock, and its preference policy depends on the implementation.
-
-\paragraph{Monitors and condition variables.} Semaphores are easy to misuse, as the swapped producer lines show. A \emph{monitor} packages shared data with the procedures that access it and guarantees that only one process is active inside at a time; waiting is done on \emph{condition variables} with \code{wait} (which atomically releases the monitor lock and sleeps) and \code{signal}. Java's \code{synchronized} methods with \code{wait()}/\code{notify()}, and \code{pthread\_mutex\_t} with \code{pthread\_cond\_t}, are monitors. Because a woken process may find the condition false again, the idiom is always \code{while (!condition) wait(...)}, never \code{if}~\cite[Section~2.3.7]{MOS}.

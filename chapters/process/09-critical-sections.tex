@@ -113,7 +113,7 @@ int lock = 0;  // shared
 \end{definition}
 
 \begin{definition}[Priority Inversion]
-  \emph{Priority inversion} occurs when a high-priority process has to wait for a low-priority process to release a resource. With busy waiting and a priority scheduler it can last forever: if the low-priority process holds the lock and the high-priority one spins, the scheduler always runs the high-priority process, so the lock holder never gets the CPU to release the lock (see also \Cref{sec:sched-further}).
+  \emph{Priority inversion} occurs when a high-priority process has to wait for a low-priority process to release a resource. With busy waiting and a priority scheduler it can last forever: if the low-priority process holds the lock and the high-priority one spins, the scheduler always runs the high-priority process, so the lock holder never gets the CPU to release the lock.
 \end{definition}
 
 \subsection{Attempt 3: Strict Alternation}
@@ -194,7 +194,7 @@ The processes act as gentlemen: ``if you want to enter, I'll let you go first.''
 
 Why can both never be inside? Suppose they were, and say process 1 wrote \code{turn} last, setting it to $0$. Process 0 set \code{intent[0]} before its own, earlier, write to \code{turn}, so when process 1 then evaluated line 5 it saw \code{intent[0]} true and \code{turn == 0}, and could not have passed. In general, whichever process writes \code{turn} last gives the turn away and waits until the other exits.
 \begin{itemize}
-  \item \emph{Correct?} Yes on early hardware, where writes to \code{intent[]} and \code{turn} became visible to the other CPU immediately and in program order. \emph{Not anymore} on modern hardware, because of relaxed memory consistency models: a CPU may let its own later load of \code{intent[other]} complete before its earlier store to \code{intent[process]} is visible to the other CPU, so both processes can read the other's intent as false and both enter (\Cref{sec:cs-further}).
+  \item \emph{Correct?} Yes on early hardware, where writes to \code{intent[]} and \code{turn} became visible to the other CPU immediately and in program order. \emph{Not anymore} on modern hardware, because of relaxed memory consistency models: a CPU may let its own later load of \code{intent[other]} complete before its earlier store to \code{intent[process]} is visible to the other CPU, so both processes can read the other's intent as false and both enter.
   \item \emph{Good?} It still busy-waits, and it is for two processes only. With a little hardware support, the solution can be much simpler.
 \end{itemize}
 
@@ -268,7 +268,7 @@ void down(semaphore *sem) {        void up(semaphore *sem) {
   }                                  }
 }                                  }
 \end{lstlisting}
-The value of a semaphore counts available ``permits''. A process that finds none is put to sleep by the kernel, using no CPU at all, and the matching \code{up()} hands the permit directly to one sleeper instead of incrementing the value. The name comes from the railway signal; \code{down} and \code{up} are Dijkstra's P and V (\Cref{sec:cs-further}).
+The value of a semaphore counts available ``permits''. A process that finds none is put to sleep by the kernel, using no CPU at all, and the matching \code{up()} hands the permit directly to one sleeper instead of incrementing the value. The name comes from the railway signal; \code{down} and \code{up} are Dijkstra's P and V.
 
 A semaphore initialized to $1$ is a \emph{binary semaphore}, and it is a lock:
 \begin{lstlisting}
@@ -331,31 +331,3 @@ Semaphores are more powerful than mutual exclusion. They can also realize \emph{
   \bottomrule
 \end{tabular}
 \end{center}
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:cs-further}
-
-\paragraph{Why Peterson fails on modern CPUs.} Each core buffers its stores in a \emph{store buffer} and may execute later loads before the buffered stores reach the cache. Process 0 executes \code{intent[0] = true} and then reads \code{intent[1]}; process 1 does the mirror image. Both stores can still sit in their store buffers when both loads execute, so both read \code{false} and both enter. Even x86, which has a comparatively strong memory model (TSO), allows this store-then-load reordering. The fix is a \emph{memory fence} between the stores and the load (\code{mfence} on x86, or C11 \code{atomic\_thread\_fence(memory\_order\_seq\_cst)}), or making \code{intent} and \code{turn} sequentially consistent atomics. The compiler may also reorder or cache these plain variables, so even on a single CPU the C code above needs atomics or \code{volatile} to be meaningful.
-
-\paragraph{Test-and-test-and-set.} In a spinlock, every \code{test\_and\_set} is a write, so on a multiprocessor each attempt pulls the cache line holding \code{lock} into the spinning core's cache in exclusive mode, and the line bounces between cores. Spinning on a plain read first, \code{while (*lock == 1) ;}, and calling \code{test\_and\_set} only when the lock looks free keeps the line shared in all caches until the lock is released. Ticket locks (fetch-and-add a ticket, wait for your number) additionally give FIFO fairness, which fixes the starvation of a plain spinlock.
-
-\paragraph{P and V.} Dijkstra introduced semaphores in 1965 with operations P (from Dutch \emph{proberen}, ``to try'', or \emph{passeren}) and V (\emph{verhogen}, ``to increase'', or \emph{vrijgeven}). Tanenbaum calls them \code{down} and \code{up}, as the slides do; POSIX calls them \code{sem\_wait()} and \code{sem\_post()}. In OSTEP's definition the value may become negative, and its absolute value then counts the waiters; the behavior seen by the processes is the same.
-
-\paragraph{Fixing \code{shm.c} with a POSIX semaphore.} On Linux, an unnamed semaphore can live in the shared mapping itself, initialized with \code{pshared} nonzero so that it works across processes:
-\begin{lstlisting}
-struct shared { sem_t mutex; int count; };
-struct shared *s = mmap(NULL, sizeof *s, PROT_READ | PROT_WRITE,
-                        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-sem_init(&s->mutex, 1, 1);   // shared between processes, value 1
-pid_t pid = fork();
-for (int i = 0; i < 1000000; ++i) {
-  sem_wait(&s->mutex);       // down
-  ++s->count;
-  sem_post(&s->mutex);       // up
-}
-\end{lstlisting}
-It prints $2\,000\,000$, but each iteration now costs two atomic operations instead of one load and one store, and a system call whenever the semaphore is contended; for a single counter the atomic add of \Cref{sec:ipc-further} is far cheaper. (macOS does not implement unnamed semaphores: \code{sem\_init()} fails there, and \code{sem\_open()} with a name must be used instead.)
-
-\paragraph{How semaphores are built.} \code{down()} and \code{up()} must themselves be atomic, so a semaphore is a counter plus a queue of blocked processes, protected by a spinlock (on a multiprocessor) or by briefly disabling interrupts (on a uniprocessor). Spinning is acceptable here because the kernel's critical section is only a few instructions long; this is the ``disable interrupts for a few instructions'' of Attempt~1. Linux goes further with the \emph{futex} (fast userspace mutex): an uncontended lock or unlock is a single atomic instruction in user space, and the \code{futex()} system call is made only when a process actually has to sleep or wake someone. \code{pthread\_mutex\_lock()} is built on it.
-
-\paragraph{Mutex vs.\ binary semaphore.} A mutex has an owner: only the process (or thread) that locked it may unlock it, which lets the system detect errors and implement priority inheritance. A semaphore has no owner: any process may \code{up()} it, which is exactly what makes it usable for synchronization, as in the producer-consumer solution of \Cref{sec:classic}, where the consumer \code{up()}s a semaphore that the producer \code{down()}s.

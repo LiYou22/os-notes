@@ -217,18 +217,3 @@ int main() { while (fork()); }
 \begin{keypoint}[Summary]
   It is important to know the internal workings of system calls. Some of them have surprising results---\code{fork()} returns twice, \code{execve()} never returns, an exited process stays around---and understanding them clarifies process control in the OS. At the very least, you no longer have to guess what happens after calling a system call.
 \end{keypoint}
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:internals-further}
-
-\paragraph{Zombies vs.\ orphans.} The two are easily confused. A \emph{zombie} is a child that died before its parent reaped it; it leaks a PID. An \emph{orphan} is a child whose parent died first; it is adopted by PID 1, which keeps calling \code{wait()}, so orphans are eventually reaped (\Cref{sec:org}). Orphans are harmless; zombies are leaks.
-
-\paragraph{\code{SIGKILL} cannot kill a zombie.} A zombie is already dead and runs no code, so signals mean nothing to it. There are only two ways to remove it: make the parent call \code{wait()}, or kill the parent, after which the zombie is reparented to PID 1 and reaped.
-
-\paragraph{Install a \code{SIGCHLD} handler.} A long-running server cannot block in \code{wait()}. The usual pattern is to loop \code{waitpid(-1, NULL, WNOHANG)} inside a \code{SIGCHLD} handler until it returns $0$; the loop is required because several signals may be merged into one. A simpler alternative is \code{signal(SIGCHLD, SIG\_IGN)}, which tells the kernel that the parent does not want exit statuses, so the kernel reaps children itself and no zombies arise.
-
-\paragraph{Decoding the status.} The \code{status} filled in by \code{wait(\&status)} is encoded. \code{WIFEXITED(status)} tests for a normal exit and \code{WEXITSTATUS(status)} extracts the exit code; \code{WIFSIGNALED(status)} tests for death by a signal and \code{WTERMSIG(status)} extracts the signal. Comparing \code{status} with $0$ directly is wrong.
-
-\paragraph{Defending against fork bombs.} Linux limits the number of processes per user with \code{RLIMIT\_NPROC} (\code{ulimit -u}), and systemd can set \code{TasksMax} through cgroups. A fork bomb then usually takes down one user rather than the whole machine---still fatal for that user.
-
-\paragraph{Why \code{wait()} goes through a signal.} The kernel could simply inspect the child's state. Routing the event through \code{SIGCHLD} unifies the two cases above into one question, ``is there a pending signal?''. Expressing asynchronous events as signals is a consistent theme in Unix.

@@ -151,12 +151,3 @@ The two kinds of library correspond to two ways of linking, which differ in \emp
 \end{figure}
 
 The rest of the unit first studies the system calls a programmer uses to manage processes (create, execute, wait, signal) and then turns to the kernel to see what each one does inside.
-
-\subsection{(SUPPLEMENT) Further Topics}
-\label{sec:program-further}
-
-\paragraph{Why an object file cannot run yet.} Call instructions in a \code{.o} file hold placeholder addresses. A \emph{relocation table} lists the spots that need real addresses, and a \emph{symbol table} lists the symbols the file defines and references. The linker resolves symbols across all object files and then patches the addresses. \code{undefined reference to 'foo'} is a symbol-resolution failure, not a compile error: it appears in the last stage of the pipeline.
-
-\paragraph{The price of dynamic linking.} Addresses of library functions are known only at run time, so calls go through an indirect jump (the PLT and GOT). This costs a little at run time and brings ``DLL hell'': a program fails to start when the library version on the target machine does not match. Go links statically by default and Rust leans static, trading binary size for deployment determinism.
-
-\paragraph{\code{gcc} is a driver.} \code{gcc} does not compile anything itself. It invokes \code{cpp}, \code{cc1} (the actual compiler), \code{as}, and \code{ld} as needed; \code{gcc -v hello.c} prints the commands it dispatches, which helps locate the stage that fails.
