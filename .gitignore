@@ -14,7 +14,7 @@
 *.xdv
 
 # Build output (rebuild with latexmk)
-main.pdf
+os-notes.pdf
 
 # macOS
 .DS_Store

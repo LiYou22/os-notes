@@ -1,0 +1,361 @@
+\section{Critical Sections and Mutual Exclusion}
+\label{sec:cs}
+
+\subsection{Mutual Exclusion and Critical Sections}
+
+\begin{definition}[Mutual Exclusion]
+  To avoid race conditions, we need \emph{mutual exclusion}: if one process is accessing a shared resource, the other processes must be excluded from accessing the same resource.
+\end{definition}
+
+The race condition is the \emph{problem}; mutual exclusion is a \emph{requirement} that avoids it. The requirement has a cost: while one process is excluded, it cannot make progress, so mutual exclusion may hinder the performance of parallel computations.
+
+\begin{definition}[Critical Section]
+  A \emph{critical section} (a.k.a.\ critical region) is a piece of code that accesses a shared resource. It is preceded by a \emph{section entry}, which declares the entry of the critical section, and followed by a \emph{section exit}, which declares its exit (\Cref{fig:csframe}).
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[part/.style={draw, minimum height=7mm, font=\small, anchor=north west}]
+  \draw[fill=tsk] (0,0) rectangle (6,-6.2);
+  \node[font=\small, anchor=north west] at (0.15,-0.1) {Program code};
+  \node[part, fill=childc!45, minimum width=36mm] at (0.5,-0.75) {Section entry};
+  \draw[fill=jobA] (1.1,-1.95) rectangle (5.4,-4.45);
+  \node[font=\small, anchor=north west] at (1.2,-2.0) {Critical section};
+  \node at (2.2,-3.25) {\dots\ \dots};
+  \node[part, fill=kernc!40, minimum width=36mm] at (0.5,-4.95) {Section exit};
+  \node[draw, fill=jobC, minimum width=22mm, minimum height=11mm, align=center] (res) at (9.4,-3.2) {Shared\\resource};
+  \draw[arr] (res.west |- 0,-2.95) -- (3.1,-2.95);
+  \draw[arr] (3.1,-3.45) -- (res.west |- 0,-3.45);
+  \node[font=\scriptsize\itshape, above] at (7.1,-2.95) {read};
+  \node[font=\scriptsize\itshape, below] at (7.1,-3.45) {write};
+\end{tikzpicture}
+\caption{A critical section is the code between a section entry and a section exit that reads or writes a shared resource (after slide 177).}
+\label{fig:csframe}
+\end{figure}
+
+The slides compare a critical section to a restroom with a single key: when a process enters its critical section, it locks the door; when it exits, it unlocks the door; the processes queued outside are blocked. Different people do different things inside, and likewise different processes may have \emph{different} critical sections that protect the same resource.
+
+\begin{keypoint}[Critical Sections Are Code]
+  \begin{itemize}
+    \item A critical section is a piece of \emph{code}, not a shared resource.
+    \item A critical section should be \emph{as tight as possible}. If the entire program were declared one big critical section, the processes would run one after another and all parallelism would be lost.
+    \item A critical section may access \emph{multiple} shared resources. Two critical sections need mutual exclusion if the sets of shared resources they access intersect.
+  \end{itemize}
+\end{keypoint}
+
+\subsection{What a Good Solution Must Satisfy}
+
+\begin{keypoint}[Four Requirements]
+  \label{kp:csreq}
+  \begin{enumerate}
+    \item \emph{Mutual exclusion.} No two processes may be simultaneously inside their critical sections.
+    \item \emph{No assumptions about speed or CPUs.} The solution cannot depend on how long a process spends inside its critical section or on the number of CPUs in the system.
+    \item \emph{Progress.} No process running outside its critical section may block other processes. Otherwise all processes could end up blocked while no process is inside its critical section.
+    \item \emph{Bounded waiting.} No process should have to wait forever to enter its critical section, i.e., no process starves to death.
+  \end{enumerate}
+\end{keypoint}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \timeaxis{7.2}{1.9}
+  \node[lane, parentc] at (-0.1,1.3) {Process A};
+  \node[lane, parentc] at (-0.1,0.6) {Process B};
+  \draw[run, parentc] (0,1.3) -- (1.2,1.3);
+  \draw[run, sigc!70] (1.2,1.3) -- (4,1.3);
+  \draw[run, parentc] (4,1.3) -- (6.6,1.3);
+  \draw[run, parentc] (0,0.6) -- (2.3,0.6);
+  \draw[blocked, black!45] (2.3,0.6) -- (4,0.6);
+  \draw[run, sigc!70] (4,0.6) -- (6.0,0.6);
+  \draw[run, parentc] (6.0,0.6) -- (6.6,0.6);
+  \node[tl, sigc, above] at (2.6,1.35) {In critical section};
+  \node[tl, sigc, above] at (5.0,0.65) {In critical section};
+  \node[tl, black!60, above] at (3.15,0.65) {Blocked};
+  \draw[evt] (1.2,1.3) -- (1.2,2.2) node[above, tl, childc]{A tries to enter};
+  \draw[evt] (4,0.6) -- (4,2.2) node[above, tl, kernc]{A exits};
+  \draw[evt] (2.3,0.6) -- (2.3,-0.3) node[below, tl, childc]{B tries to enter};
+\end{tikzpicture}
+\caption{Mutual exclusion in action: B tries to enter while A is inside, so B blocks in its section entry until A exits (after slide 181).}
+\label{fig:csblock}
+\end{figure}
+
+It is always the \emph{section entry} that gets blocked, not the critical section itself (\Cref{fig:csblock}). The whole problem is therefore how to implement the section entry and the section exit. The rest of this section tries six designs and judges each by two questions: is it \emph{correct} (does it guarantee mutual exclusion?), and is it a \emph{good} solution (does it satisfy the other requirements, and does it perform well?).
+
+\subsection{Attempt 1: Disabling Interrupts}
+
+Section entry disables interrupts; section exit enables them. With interrupts disabled, the timer interrupt cannot fire, so no context switch can occur, and while one process is in its critical section, the CPU will not be switched to another process.
+\begin{itemize}
+  \item \emph{Correct?} On a single-processor system, yes. On a multiprocessor system, \emph{no}: disabling interrupts affects only the current CPU, and the other CPUs can still access the shared resource.
+  \item \emph{Good?} Even on a single processor it is a terrible idea to let user processes enable and disable interrupts at will: a process that never re-enables them owns the machine. Within the OS kernel itself, however, it is often convenient to disable interrupts for a few instructions.
+\end{itemize}
+
+\subsection{Attempt 2: A Lock Variable}
+
+Use a shared variable \code{lock}: $0$ means free, $1$ means some process is inside.
+\begin{lstlisting}
+int lock = 0;  // shared
+
+// section entry
+1  while (lock == 1)
+2    ;  // busy waiting
+3  lock = 1;
+   ... critical section ...
+// section exit
+   lock = 0;
+\end{lstlisting}
+\begin{itemize}
+  \item \emph{Correct?} \emph{No}. It suffers from exactly the same race condition as \code{shm.c}. Process A finds \code{lock == 0} on line 1 and is switched out before line 3; process B also finds \code{lock == 0}, sets it, and enters; A resumes, sets \code{lock = 1}, and enters too. The test and the set are two separate steps, just like the load and the store of \code{++*count}.
+  \item \emph{Good, even if it worked?} No, for two reasons.
+\end{itemize}
+
+\begin{definition}[Busy Waiting]
+  Repeatedly testing a variable until some value appears is called \emph{busy waiting}, or \emph{spinning}. It wastes CPU time: the spinning process uses the CPU without doing anything useful.
+\end{definition}
+
+\begin{definition}[Priority Inversion]
+  \emph{Priority inversion} occurs when a high-priority process has to wait for a low-priority process to release a resource. With busy waiting and a priority scheduler it can last forever: if the low-priority process holds the lock and the high-priority one spins, the scheduler always runs the high-priority process, so the lock holder never gets the CPU to release the lock (see also \Cref{sec:sched-further}).
+\end{definition}
+
+\subsection{Attempt 3: Strict Alternation}
+
+Let the processes take turns, using a shared variable \code{turn} that says whose turn it is:
+\begin{center}
+\begin{minipage}[t]{0.45\textwidth}
+\begin{lstlisting}
+// Process 0
+1  for (;;) {
+2    while (turn != 0)
+3      ;  // busy waiting
+4    critical_section();
+5    turn = 1;
+6    noncritical_section();
+7  }
+\end{lstlisting}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.45\textwidth}
+\begin{lstlisting}
+// Process 1
+1  for (;;) {
+2    while (turn != 1)
+3      ;  // busy waiting
+4    critical_section();
+5    turn = 0;
+6    noncritical_section();
+7  }
+\end{lstlisting}
+\end{minipage}
+\end{center}
+with \code{int turn = 0;} shared. The critical sections are executed in alternating order: 0, 1, 0, 1, \dots
+\begin{itemize}
+  \item \emph{Correct?} Yes, it avoids all races: \code{turn} is only ever written by the process that holds the turn, so a process can enter only when the other has handed the turn over.
+  \item \emph{Good?} No. It violates Requirement~3 (progress). Suppose process 0 finishes its critical section, sets \code{turn = 1}, finishes its short noncritical section, and wants to enter again, while process 1 is busy in a long noncritical section. Process 0 must wait until process 1 has gone through its critical section, so a process outside its critical section blocks another. Neither process can enter its critical section twice in a row.
+\end{itemize}
+
+\subsection{Attempt 4: Peterson's Algorithm}
+
+Peterson's algorithm (1981) improves strict alternation by combining it with lock variables: each process announces its \emph{intent} to enter, and \code{turn} only breaks ties.
+\begin{lstlisting}
+int intent[2] = {0, 0};  // who wants to enter critical section?
+int turn;                // whose turn is it?
+
+1  void section_entry(int process) {  // process is 0 or 1
+2    int other = 1 - process;         // the other process is 1 or 0
+3    intent[process] = true;          // I intend to enter critical section
+4    turn = other;                    // make it the other process's turn
+5    while (intent[other] && turn == other)  // I'm a gentleman!
+6      ;                              // busy waiting while it's not my turn
+7  }
+
+1  void section_exit(int process) {
+2    intent[process] = false;         // simply undo my intent
+3  }
+\end{lstlisting}
+The processes act as gentlemen: ``if you want to enter, I'll let you go first.'' A process waits only while the other one \emph{both} wants to enter \emph{and} has the turn. If the other is not interested, it enters immediately, which fixes the progress problem of strict alternation.
+
+\begin{example}[A Run of Peterson's Algorithm]
+  \begin{center}
+  \small
+  \begin{tabular}{lll}
+    \toprule
+    Process 0 & Process 1 & \\
+    \midrule
+    \code{intent[0] = true}, \code{turn = 1} & & \\
+     & \code{intent[1] = true}, \code{turn = 0} & \\
+    \code{turn} is not \code{other}: in critical section & & \\
+     & \code{turn == 0} and \code{intent[0]}: busy waiting\dots & \\
+    \code{intent[0] = false} & & \\
+     & \code{intent[0]} is false: in critical section & \\
+     & \code{intent[1] = false} & \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+  Both processes want to enter, and process 1 wrote \code{turn} last, so process 1 is the one that waits.
+\end{example}
+
+Why can both never be inside? Suppose they were, and say process 1 wrote \code{turn} last, setting it to $0$. Process 0 set \code{intent[0]} before its own, earlier, write to \code{turn}, so when process 1 then evaluated line 5 it saw \code{intent[0]} true and \code{turn == 0}, and could not have passed. In general, whichever process writes \code{turn} last gives the turn away and waits until the other exits.
+\begin{itemize}
+  \item \emph{Correct?} Yes on early hardware, where writes to \code{intent[]} and \code{turn} became visible to the other CPU immediately and in program order. \emph{Not anymore} on modern hardware, because of relaxed memory consistency models: a CPU may let its own later load of \code{intent[other]} complete before its earlier store to \code{intent[process]} is visible to the other CPU, so both processes can read the other's intent as false and both enter (\Cref{sec:cs-further}).
+  \item \emph{Good?} It still busy-waits, and it is for two processes only. With a little hardware support, the solution can be much simpler.
+\end{itemize}
+
+\subsection{Attempt 5: Spinlocks}
+
+Modern CPUs all have instructions that are guaranteed to execute atomically. The simplest is \emph{test-and-set}: conceptually, it executes the following code without interruption, returning the old value pointed to by \code{ptr} and simultaneously updating it to \code{new}.
+\begin{lstlisting}
+int test_and_set(int *ptr, int new) {
+  // this code executes atomically
+  int old = *ptr;
+  *ptr = new;
+  return old;
+}
+\end{lstlisting}
+It is the lock variable of Attempt~2 with the test and the set fused into one step, which is exactly what Attempt~2 was missing:
+\begin{lstlisting}
+int lock = 0;  // 0: available, 1: held
+
+void section_entry(int *lock) {
+  while (test_and_set(lock, 1) == 1)
+    ;  // busy waiting
+}
+
+void section_exit(int *lock) {
+  *lock = 0;
+}
+\end{lstlisting}
+If \code{test\_and\_set} returns $0$, the lock was free and the caller has just taken it; if it returns $1$, the lock was held, setting it to $1$ again changed nothing, and the caller retries.
+
+\begin{definition}[Spinlock]
+  A \emph{spinlock} is a lock built upon CPU instructions that guarantee atomic operation, such as test-and-set, compare-and-swap, fetch-and-add, or load-linked/store-conditional, where a process waiting for the lock spins in a loop.
+\end{definition}
+
+\begin{itemize}
+  \item \emph{Correct?} Yes, on a preemptive scheduler (on a nonpreemptive one, a process spinning on a single CPU would never let the holder run). Beware of priority inversion.
+  \item \emph{Good?} Simplicity: yes. Fairness: no guarantees; under contention a process may spin forever while others keep winning the lock, so it can starve. Performance:
+  \begin{itemize}
+    \item single-processor system: bad. With $N$ processes contending for a lock, $(N-1)/N$ of the CPU time is wasted on spinning, since only the holder makes progress;
+    \item multiprocessor system: effective if the number of processes is about the number of CPUs and the critical section is short, because then the holder is running on another CPU and will release the lock soon.
+  \end{itemize}
+\end{itemize}
+
+\subsubsection{Attempt 5.1: less spinning}
+One change makes the spinlock less wasteful: instead of spinning, give up the CPU.
+\begin{lstlisting}
+void section_entry(int *lock) {
+  while (test_and_set(lock, 1) == 1)
+    sched_yield();  // give up the CPU
+}
+\end{lstlisting}
+\code{sched\_yield()} (\Cref{sec:sched}) moves the caller to the back of the run queue. This run-and-yield approach is better than spinning but still costly: before the process holding the lock gets to run again, every other contending process still has to run and yield, and each of those context switches is expensive. What we want is to \emph{block} instead of spinning, and be woken up when the lock is released. It is time to introduce a new OS primitive.
+
+\subsection{Attempt 6: Semaphores}
+
+\begin{definition}[Semaphore]
+  A \emph{semaphore} is an object with a non-negative integer value, which must be initialized before it is used. It supports two operations, each of which executes atomically:
+  \begin{itemize}
+    \item \code{down(sem)}: if the value is positive, decrement it; otherwise, block on the semaphore;
+    \item \code{up(sem)}: if some process is blocked on the semaphore, let one such process proceed; otherwise, increment the value.
+  \end{itemize}
+  \code{man 7 sem\_overview} describes the POSIX version.
+\end{definition}
+
+\begin{lstlisting}
+void down(semaphore *sem) {        void up(semaphore *sem) {
+  // atomic operation                // atomic operation
+  if (*sem > 0) {                    if (some process is blocked on sem) {
+    *sem = *sem - 1;                   let one such process proceed
+  } else {                           } else {
+    block on sem;                      *sem = *sem + 1;
+  }                                  }
+}                                  }
+\end{lstlisting}
+The value of a semaphore counts available ``permits''. A process that finds none is put to sleep by the kernel, using no CPU at all, and the matching \code{up()} hands the permit directly to one sleeper instead of incrementing the value. The name comes from the railway signal; \code{down} and \code{up} are Dijkstra's P and V (\Cref{sec:cs-further}).
+
+A semaphore initialized to $1$ is a \emph{binary semaphore}, and it is a lock:
+\begin{lstlisting}
+semaphore sem = 1;  // init a binary semaphore
+
+down(&sem);   // section entry
+   ... critical section ...
+up(&sem);     // section exit
+\end{lstlisting}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \timeaxis{8.2}{2.6}
+  \foreach \y/\n in {2/1, 1.3/2, 0.6/3} \node[lane] at (-0.1,\y) {Process \n};
+  \draw[run, parentc] (0,2) -- (1,2);
+  \draw[run, sigc!70] (1,2) -- (3,2);
+  \draw[run, parentc] (3,2) -- (7.6,2);
+  \draw[run, parentc] (0,1.3) -- (1.8,1.3);
+  \draw[blocked, black!45] (1.8,1.3) -- (3,1.3);
+  \draw[run, sigc!70] (3,1.3) -- (4.8,1.3);
+  \draw[run, parentc] (4.8,1.3) -- (7.6,1.3);
+  \draw[run, parentc] (0,0.6) -- (2.4,0.6);
+  \draw[blocked, black!45] (2.4,0.6) -- (4.8,0.6);
+  \draw[run, sigc!70] (4.8,0.6) -- (6.6,0.6);
+  \draw[run, parentc] (6.6,0.6) -- (7.6,0.6);
+  \foreach \x/\v in {0.4/1, 1.2/0, 3/0, 4.8/0, 6.8/1}
+    \node[tl, color=accent] at (\x,2.45) {\code{sem}=\v};
+  \draw[evt] (3,0.4) -- (3,2.25);
+  \draw[evt] (4.8,0.4) -- (4.8,2.25);
+  \draw[evt] (6.6,0.4) -- (6.6,2.25);
+\end{tikzpicture}
+\caption{A binary semaphore as a lock (after slide 194). Red: in the critical section; dashed: blocked in \code{down()}. Each \code{up()} hands the permit straight to a blocked process, so \code{sem} stays $0$ until the last process leaves.}
+\label{fig:semlock}
+\end{figure}
+
+\begin{definition}[Mutex]
+  A lock that guarantees mutual exclusion is called a \emph{mutex} (for ``mutual exclusion''). A binary semaphore is one way to implement it.
+\end{definition}
+
+\begin{itemize}
+  \item \emph{Correct?} Yes.
+  \item \emph{Good?} Yes. Waiting processes block instead of spinning, and the kernel decides whom to wake.
+\end{itemize}
+
+Semaphores are more powerful than mutual exclusion. They can also realize \emph{process synchronization}: coordinating a set of processes so that together they produce meaningful output, as the kernel did for the pipe in \Cref{sec:ipc}. A semaphore whose value may exceed $1$ is called a \emph{counting semaphore}; the next section uses counting semaphores to count free and filled buffer slots.
+
+\begin{center}
+\small
+\begin{tabular}{lll}
+  \toprule
+  Attempt & Correct? & Good? \\
+  \midrule
+  1. Disable interrupts & single CPU only & no: user processes must not control interrupts \\
+  2. Lock variable & no: same race & no: busy waiting, priority inversion \\
+  3. Strict alternation & yes & no: violates progress \\
+  4. Peterson & not on modern hardware & no: busy waiting, two processes only \\
+  5. Spinlock & yes (preemptive scheduler) & only for short sections on multiprocessors \\
+  6. Semaphore & yes & yes \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:cs-further}
+
+\paragraph{Why Peterson fails on modern CPUs.} Each core buffers its stores in a \emph{store buffer} and may execute later loads before the buffered stores reach the cache. Process 0 executes \code{intent[0] = true} and then reads \code{intent[1]}; process 1 does the mirror image. Both stores can still sit in their store buffers when both loads execute, so both read \code{false} and both enter. Even x86, which has a comparatively strong memory model (TSO), allows this store-then-load reordering. The fix is a \emph{memory fence} between the stores and the load (\code{mfence} on x86, or C11 \code{atomic\_thread\_fence(memory\_order\_seq\_cst)}), or making \code{intent} and \code{turn} sequentially consistent atomics. The compiler may also reorder or cache these plain variables, so even on a single CPU the C code above needs atomics or \code{volatile} to be meaningful.
+
+\paragraph{Test-and-test-and-set.} In a spinlock, every \code{test\_and\_set} is a write, so on a multiprocessor each attempt pulls the cache line holding \code{lock} into the spinning core's cache in exclusive mode, and the line bounces between cores. Spinning on a plain read first, \code{while (*lock == 1) ;}, and calling \code{test\_and\_set} only when the lock looks free keeps the line shared in all caches until the lock is released. Ticket locks (fetch-and-add a ticket, wait for your number) additionally give FIFO fairness, which fixes the starvation of a plain spinlock.
+
+\paragraph{P and V.} Dijkstra introduced semaphores in 1965 with operations P (from Dutch \emph{proberen}, ``to try'', or \emph{passeren}) and V (\emph{verhogen}, ``to increase'', or \emph{vrijgeven}). Tanenbaum calls them \code{down} and \code{up}, as the slides do; POSIX calls them \code{sem\_wait()} and \code{sem\_post()}. In OSTEP's definition the value may become negative, and its absolute value then counts the waiters; the behavior seen by the processes is the same.
+
+\paragraph{Fixing \code{shm.c} with a POSIX semaphore.} On Linux, an unnamed semaphore can live in the shared mapping itself, initialized with \code{pshared} nonzero so that it works across processes:
+\begin{lstlisting}
+struct shared { sem_t mutex; int count; };
+struct shared *s = mmap(NULL, sizeof *s, PROT_READ | PROT_WRITE,
+                        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+sem_init(&s->mutex, 1, 1);   // shared between processes, value 1
+pid_t pid = fork();
+for (int i = 0; i < 1000000; ++i) {
+  sem_wait(&s->mutex);       // down
+  ++s->count;
+  sem_post(&s->mutex);       // up
+}
+\end{lstlisting}
+It prints $2\,000\,000$, but each iteration now costs two atomic operations instead of one load and one store, and a system call whenever the semaphore is contended; for a single counter the atomic add of \Cref{sec:ipc-further} is far cheaper. (macOS does not implement unnamed semaphores: \code{sem\_init()} fails there, and \code{sem\_open()} with a name must be used instead.)
+
+\paragraph{How semaphores are built.} \code{down()} and \code{up()} must themselves be atomic, so a semaphore is a counter plus a queue of blocked processes, protected by a spinlock (on a multiprocessor) or by briefly disabling interrupts (on a uniprocessor). Spinning is acceptable here because the kernel's critical section is only a few instructions long; this is the ``disable interrupts for a few instructions'' of Attempt~1. Linux goes further with the \emph{futex} (fast userspace mutex): an uncontended lock or unlock is a single atomic instruction in user space, and the \code{futex()} system call is made only when a process actually has to sleep or wake someone. \code{pthread\_mutex\_lock()} is built on it.
+
+\paragraph{Mutex vs.\ binary semaphore.} A mutex has an owner: only the process (or thread) that locked it may unlock it, which lets the system detect errors and implement priority inheritance. A semaphore has no owner: any process may \code{up()} it, which is exactly what makes it usable for synchronization, as in the producer-consumer solution of \Cref{sec:classic}, where the consumer \code{up()}s a semaphore that the producer \code{down()}s.

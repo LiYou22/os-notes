@@ -2,7 +2,7 @@
 
 My LaTeX notes for CSCI-GA 2250-002 (Operating Systems) at NYU Courant, Fall 2026, taught by Dr. Yang Tang.
 
-I write one chapter per slide deck and split each chapter into sections by topic. So far there are two chapters: the introduction deck, and Process Management up to slide 162. Figures captioned "after slide n" are my TikZ redraws of that slide. Sections marked (SUPPLEMENT) are things I looked up outside the slides, mostly in CS:APP (Bryant & O'Hallaron), OSTEP (Arpaci-Dusseau), and Tanenbaum & Bos.
+I write one chapter per slide deck and split each chapter into sections by topic. So far there are two chapters: the introduction deck, and Process Management up to slide 245 (through the classical IPC problems). Figures captioned "after slide n" are my TikZ redraws of that slide. Sections marked (SUPPLEMENT) are things I looked up outside the slides, mostly in CS:APP (Bryant & O'Hallaron), OSTEP (Arpaci-Dusseau), and Tanenbaum & Bos.
 
 ## Files
 
@@ -24,6 +24,9 @@ chapters/
     05-signals.tex             signals and job control
     06-organization.tex        booting, init, orphans, the process tree
     07-scheduling.tex          process states, context switches, scheduling policies up to MLFQ
+    08-ipc.tex                 IPC, pipes, shared memory, race conditions
+    09-critical-sections.tex   critical sections, from disabling interrupts to semaphores
+    10-classical-ipc.tex       producer-consumer, dining philosophers, readers-writers, sleeping barber
   appA-syscalls.tex            Appendix A: quick reference for the system calls
 ```
 
@@ -32,8 +35,8 @@ chapters/
 You need TeX Live with `latexmk`.
 
 ```sh
-latexmk -pdf main.tex   # builds main.pdf
+latexmk -pdf main.tex   # builds os-notes.pdf
 latexmk -c              # cleans up the aux files
 ```
 
-When the course moves on, a new topic in an existing deck gets its own file (e.g. `chapters/process/08-ipc.tex`, starting with `\section{...}`) and an `\input` line in the chapter file. A new deck gets a new `chapters/chN-topic.tex` with a `\chapter{...}`, a folder for its sections, and an `\include` in `main.tex`.
+When the course moves on, a new topic in an existing deck gets its own file (e.g. `chapters/process/11-threads.tex`, starting with `\section{...}`) and an `\input` line in the chapter file. A new deck gets a new `chapters/chN-topic.tex` with a `\chapter{...}`, a folder for its sections, and an `\include` in `main.tex`.

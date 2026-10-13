@@ -1,0 +1,215 @@
+\section{Interprocess Communication}
+\label{sec:ipc}
+
+\subsection{What IPC Is and Why We Need It}
+
+\begin{definition}[Interprocess Communication]
+  Processes often need to communicate with one another. Any mechanism that lets them do so is called \emph{interprocess communication} (IPC).
+\end{definition}
+
+Several forms of IPC have already appeared in these notes:
+\begin{itemize}
+  \item \emph{signals}: \code{kill -STOP 2250} tells process 2250 to stop (\Cref{sec:signals});
+  \item \emph{pipelines}: in \code{ls | less}, the output of \code{ls} becomes the input of \code{less};
+  \item \emph{files}, \emph{sockets}, and \emph{shared memory}.
+\end{itemize}
+
+There are three reasons for IPC.
+\begin{itemize}
+  \item \emph{To share information.} This is the obvious one.
+  \item \emph{To reuse software.} Small programs that each do one job can be combined into a larger one. The following pipeline is a spell checker for a Wikipedia page:
+\begin{lstlisting}[style=sh]
+curl "https://en.wikipedia.org/wiki/Pipeline_(Unix)" | sed 's/[^a-zA-Z ]/ /g' |
+  tr 'A-Z ' 'a-z\n' | grep '[a-z]' | sort -u |
+  comm -23 - <(sort /usr/share/dict/words) | less
+\end{lstlisting}
+  \code{curl} downloads the page; \code{sed} replaces every character that is not a letter or a space with a space; \code{tr} lowercases the letters and turns each space into a newline, so there is one word per line; \code{grep} drops the empty lines; \code{sort -u} sorts the words and removes duplicates; \code{comm -23} prints the lines that appear only in its first input (the page's words) and not in its second (the sorted dictionary), i.e., the misspelled or unknown words; and \code{less} pages through them. None of these programs knows anything about spell checking.
+  \item \emph{To speed up computation.} A job can be divided into tasks that run as separate processes in parallel, after which the results are combined. MapReduce is the standard example (CSCI-UA.0476 and CSCI-GA.2436 cover big-data systems).
+\end{itemize}
+
+\subsection{Two Ways to Do IPC}
+
+\begin{definition}[Shared Resource and Message Passing]
+  With a \emph{shared resource}, processes communicate by reading and writing data that all of them can access. With \emph{message passing}, processes communicate by sending data to one another; the data is copied from the sender to the receiver.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[proc/.style={pill, fill=jobA, minimum width=20mm},
+                    dat/.style={draw, fill=jobC, minimum height=6mm, inner sep=3pt}]
+  \node[proc] (a1) at (0,0) {Process A};
+  \node[proc] (b1) at (3,0) {Process B};
+  \node[dat, minimum width=16mm, minimum height=8mm] (d) at (1.5,-1.6) {Data};
+  \draw[{Stealth[length=2mm]}-{Stealth[length=2mm]}, thick] (a1.south) -- (d.north west);
+  \draw[{Stealth[length=2mm]}-{Stealth[length=2mm]}, thick] (b1.south) -- (d.north east);
+  \begin{scope}[on background layer]
+    \node[fit=(a1)(b1)(d), fill=tsk!70, inner sep=8pt, label={[font=\small]above:Shared resource}] {};
+  \end{scope}
+
+  \node[proc] (a2) at (6.6,-0.6) {Process A};
+  \node[proc] (b2) at (11.4,-0.6) {Process B};
+  \draw[arr] ([yshift=2mm]a2.east) -- node[dat, font=\scriptsize, inner sep=2pt, pos=0.3, yshift=1.5mm]{Data} ([yshift=2mm]b2.west);
+  \draw[arr] ([yshift=-2mm]b2.west) -- node[dat, font=\scriptsize, inner sep=2pt, pos=0.3, yshift=-1.5mm]{Data} ([yshift=-2mm]a2.east);
+  \node[font=\small] at (9,0.85) {Message passing};
+\end{tikzpicture}
+\caption{The two models of IPC (after slide 166).}
+\label{fig:ipcmodels}
+\end{figure}
+
+A pipe is message passing: \code{ls} hands data to the kernel, which hands it to \code{less}. Shared memory is a shared resource: both processes read and write the same bytes, and the kernel is not involved in each access. The two subsections below look at one example of each.
+
+\subsection{Case Study: Pipes}
+
+\paragraph{The programmer's view.} The \code{pipe()} system call creates a pipe and returns two file descriptors, \code{pipefd[0]} and \code{pipefd[1]}. Data written to \code{pipefd[1]} (the write end) can be read from \code{pipefd[0]} (the read end), in the same order. In \code{ls | less}, \code{ls} writes its output to the write end, and \code{less} reads its input from the read end.
+
+\begin{definition}[Producer-Consumer Model]
+  When one process produces data and another consumes it, through a buffer between them, the arrangement is called the \emph{producer-consumer model}. A pipe is a producer-consumer model: \code{ls} is the producer and \code{less} the consumer.
+\end{definition}
+
+\paragraph{The kernel's view.} The buffer of a pipe lives in the kernel. \code{ls} calls \code{write()} on the write end, which copies its data into the kernel buffer; \code{less} calls \code{read()} on the read end, which copies data out of it. The buffer has a fixed size, and the kernel handles its two boundary cases:
+\begin{itemize}
+  \item if the pipe is full, \code{write()} blocks until \code{less} has read something;
+  \item if the pipe is empty, \code{read()} blocks until \code{ls} has written something.
+\end{itemize}
+
+\begin{definition}[Process Synchronization]
+  Coordinating processes so that each waits for the others when necessary, here a writer waiting for free space and a reader waiting for data, is called \emph{process synchronization}.
+\end{definition}
+
+So the producer never overwrites unread data and the consumer never reads garbage, without either program doing anything special. \code{man 7 pipe} has the details.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[proc/.style={pill, fill=jobA, minimum width=14mm, font=\ttfamily}]
+  \node[proc] (ls) at (0,0) {ls};
+  \node[proc] (less) at (9,0) {less};
+  \node[box, fill=tsk, font=\ttfamily\scriptsize] (w) at (0.8,-1.6) {write()};
+  \node[box, fill=tsk, font=\ttfamily\scriptsize] (r) at (8.2,-1.6) {read()};
+  \foreach \k in {0,...,8} \draw[fill=jobC] (3.2+0.32*\k,-2.75) rectangle ++(0.32,0.5);
+  \draw[thick] (3.0,-2.25) -- (6.08,-2.25); \draw[thick] (3.0,-2.75) -- (6.08,-2.75);
+  \draw (ls) -- (w);
+  \draw[arr] (w.south) to[out=-80, in=180] (3.15,-2.5);
+  \draw (6.08,-2.5) to[out=0, in=-100] (r.south);
+  \draw[arr] (r) -- (less);
+  \node[callout, anchor=south] at (2.9,-1.45) {If the pipe is full,\\ \code{write()} will block.};
+  \node[callout, anchor=south] at (6.1,-1.45) {If the pipe is empty,\\ \code{read()} will block.};
+  \node[font=\scriptsize\ttfamily, color=kernc] at (2.1,-2.1) {pipefd[1]};
+  \node[font=\scriptsize\ttfamily, color=kernc] at (7.0,-2.1) {pipefd[0]};
+  \begin{scope}[on background layer]
+    \node[fit={(w)(r)(3.0,-3.0)}, fill=kspace, draw=kernc, rounded corners=3pt, inner sep=6pt,
+          label={[font=\small\itshape, anchor=south east]south east:Kernel}] {};
+  \end{scope}
+\end{tikzpicture}
+\caption{\code{ls | less}: the pipe is a bounded buffer in the kernel, and the kernel blocks \code{write()} on a full pipe and \code{read()} on an empty one (after slides 167--168).}
+\label{fig:pipe}
+\end{figure}
+
+\subsection{Shared Memory}
+
+\begin{definition}[Shared Memory]
+  \emph{Shared memory} is a region of memory created by the kernel that can be mapped into the address spaces of several processes. It is visible to all processes in the system (a pipe, by contrast, is visible only to the two processes at its ends) and accessible by all of them, although system calls can change its ownership and permissions. \code{man 7 shm\_overview} has the details.
+\end{definition}
+
+Once the region is mapped, processes read and write it with ordinary loads and stores; no system call is needed per access. That makes shared memory the fastest form of IPC, but it also means the kernel no longer takes part in each access. With a pipe, the kernel provided synchronization for free; with shared memory, it is up to the processes to coordinate. What could possibly go wrong?
+
+\begin{example}[Two Processes Incrementing a Shared Counter]
+  \label{ex:shm}
+  \code{shm.c} creates a 4-byte shared counter, forks, and lets both processes increment it a million times. The parent then waits for the child and prints the counter.
+\begin{lstlisting}
+int main() {
+  // create a 4-byte shared memory
+  int *count = mmap(NULL, 4, PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  pid_t pid = fork();
+  for (int i = 0; i < 1000000; ++i) {
+    ++*count;
+  }
+  if (pid) {
+    wait(NULL);
+    printf("count = %d\n", *count);
+  }
+}
+\end{lstlisting}
+  \code{mmap()} asks the kernel for a new mapping: \code{NULL} lets the kernel choose the address, \code{4} is the length, and the protection allows reading and writing. \code{MAP\_ANONYMOUS} means the region is not backed by a file (hence the descriptor $-1$ and offset $0$), and the memory starts zeroed. \code{MAP\_SHARED} is the important flag: the child inherits the mapping across \code{fork()}, and unlike ordinary memory, which \code{fork()} shares copy-on-write (\Cref{sec:fork}), writes to a shared mapping are seen by both processes.
+
+  The expected output is $2\,000\,000$. The actual output is different every time:
+\begin{lstlisting}[style=sh]
+$ ./shm
+count = 1434181
+$ ./shm
+count = 1062142
+$ ./shm
+count = 1256405
+\end{lstlisting}
+\end{example}
+
+\paragraph{Why updates are lost.} \code{++*count} looks like one operation, but it is not. Compiled without optimization (\code{gcc -S shm.c}), it becomes
+\begin{lstlisting}[style=sh]
+    movq    -16(%rbp), %rax     # a = count      (load the pointer)
+    movl    (%rax), %eax        # a = *a         (load the counter)
+    leal    1(%rax), %edx       # d = a + 1
+    movq    -16(%rbp), %rax     # a = count
+    movl    %edx, (%rax)        # *a = d         (store the counter)
+\end{lstlisting}
+Ignoring the pointer loads, it is three steps: \code{a = *count; d = a + 1; *count = d;}. The value lives in a register between the load and the store, and a context switch can occur between any two instructions. If it occurs in that window, the other process's increment is overwritten (\Cref{fig:race}): both processes read $0$, both compute $1$, both store $1$. Two increments, one effect. Over two million increments this happens hundreds of thousands of times. On a multiprocessor, the parent and the child run truly in parallel, and the same interleaving occurs without any context switch.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=-0.62cm, c/.style={font=\ttfamily\scriptsize, anchor=base}]
+  \node[pill, fill=parentc!35, minimum width=16mm] at (4.2,-1.4) {Parent};
+  \node[pill, fill=childc!35, minimum width=16mm] at (8.4,-1.4) {Child};
+  \node[draw, fill=jobC, font=\ttfamily\scriptsize, minimum width=12mm] at (11.2,-1.4) {count};
+  \foreach \y/\who/\p/\ch/\v in {
+      0/Parent is running/{a = *count; (a = 0)}//0,
+      1//{d = a + 1; (d = 1)}//0,
+      2.6/Child is running//{a = *count; (a = 0)}/0,
+      3.6///{d = a + 1; (d = 1)}/0,
+      4.6///{*count = d; (*count = 1)}/1,
+      6.2/Parent is running/{*count = d; (*count = 1)}//1} {
+    \node[anchor=base west, font=\scriptsize] at (0,\y) {\who};
+    \node[c] at (4.2,\y) {\p};
+    \node[c] at (8.4,\y) {\ch};
+    \node[c] at (11.2,\y) {\v};
+  }
+  \foreach \y in {1.75, 5.35} {
+    \node[anchor=west, font=\scriptsize\itshape] (cs) at (0,\y) {Context switch};
+    \draw[densely dashed, black!60] (cs.east) -- (11.8,\y);
+  }
+  \node[font=\scriptsize, color=sigc, anchor=north] at (11.2,6.6) {one update lost};
+\end{tikzpicture}
+\caption{A context switch between the load and the store of \code{++*count} loses one of two increments (after slide 174).}
+\label{fig:race}
+\end{figure}
+
+\subsection{Race Conditions}
+
+\begin{definition}[Race Condition]
+  A \emph{race condition} occurs when the result of a computation depends on the timing of the execution, i.e., on the particular order in which processes access a shared resource. When the shared resource is memory, and at least one of the concurrent accesses is a write, it is more specifically a \emph{data race}.
+\end{definition}
+
+Race conditions are always bad.
+\begin{itemize}
+  \item Compiler optimizations may produce surprising output when code has data races. The compiler assumes that no one else modifies \code{*count} during the loop, so it is free to keep the counter in a register or to rewrite the loop entirely (\Cref{sec:ipc-further}). Data races are undefined behavior (the ``nasal demons'' of C folklore; see \emph{Schrödinger's Code} for an introduction).
+  \item The computation is nondeterministic, so debugging is no fun at all. A \emph{Heisenbug} is a bug that disappears or changes its behavior when you try to observe it: adding a \code{printf} or running under a debugger changes the timing, and the race no longer shows.
+\end{itemize}
+
+\begin{keypoint}
+  A pipe synchronizes for you; shared memory does not. Whenever processes share memory, they must coordinate their accesses themselves, which is the subject of the next section.
+\end{keypoint}
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:ipc-further}
+
+\paragraph{\code{-O0} vs.\ \code{-O2} on my machine.} Compiled with clang on an Apple Silicon Mac, \code{shm.c} prints $1\,437\,397$ and $1\,149\,279$ at \code{-O0}, but $2\,000\,000$ on every run at \code{-O1} and \code{-O2}. The optimized code is one load, one addition of $1\,000\,000$, and one store: the compiler replaced the whole loop by \code{*count += 1000000}, which is legal because it assumes no other process touches \code{*count}. The race is still there, but its window shrank from two million chances to one, so it almost never shows. A program that ``works'' only because the race became unlikely is the worst kind of bug.
+
+\paragraph{How the shell builds \code{ls | less}.} The shell calls \code{pipe(fd)} and then forks twice. The first child calls \code{dup2(fd[1], 1)} so that its standard output is the write end, closes both pipe descriptors, and \code{exec}s \code{ls}; the second calls \code{dup2(fd[0], 0)}, closes both, and \code{exec}s \code{less}. The parent closes both ends and waits. Closing the unused ends matters: \code{read()} on an empty pipe returns $0$ (end of file) only when \emph{every} write end is closed, so a stray open write end makes \code{less} wait forever. Writing to a pipe whose read ends are all closed raises \code{SIGPIPE} (\Cref{sec:signals}). This is the fd-table manipulation of \Cref{sec:kernel} put to work.
+
+\paragraph{Pipe capacity and atomic writes.} On Linux a pipe holds $65\,536$ bytes by default (\code{fcntl(fd, F\_SETPIPE\_SZ, n)} changes it). POSIX guarantees that a write of at most \code{PIPE\_BUF} bytes ($4096$ on Linux) is atomic: if several processes write to the same pipe, such writes are never interleaved with one another. Larger writes may be split.
+
+\paragraph{Named pipes and other IPC mechanisms.} A pipe created by \code{pipe()} has no name, so only related processes (those that inherit its descriptors through \code{fork()}) can use it. A \emph{named pipe} (FIFO), created with \code{mkfifo}, appears in the file system and lets unrelated processes communicate. Beyond those, Unix offers message queues (\code{mq\_open()}), Unix-domain sockets (bidirectional, and able to pass file descriptors between processes), and named shared memory via \code{shm\_open()} plus \code{mmap()}, which unrelated processes can map by name, unlike the anonymous mapping of \Cref{ex:shm}.
+
+\paragraph{Fixing \code{shm.c} with an atomic add.} Replacing \code{++*count} by the GCC/clang builtin
+\begin{lstlisting}
+__atomic_fetch_add(count, 1, __ATOMIC_SEQ_CST);  // atomic_fetch_add() in C11 <stdatomic.h>
+\end{lstlisting}
+\noindent makes the load, add, and store a single indivisible operation, and the program prints $2\,000\,000$ at every optimization level. Atomic instructions are the hardware building block of \Cref{sec:cs}, which develops the general solution for critical sections longer than one instruction.

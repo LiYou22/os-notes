@@ -1,7 +1,7 @@
 \chapter{System Call Reference}
 \label{app:syscalls}
 
-The process-management calls used in these notes, with the section where each is discussed.
+The process-management and IPC calls used in these notes, with the section where each is discussed.
 
 \begin{center}
 \small
@@ -19,6 +19,10 @@ The process-management calls used in these notes, with the section where each is
   signal(sig, h) & install a handler and return the old one; not possible for \code{SIGKILL} and \code{SIGSTOP} & \Cref{sec:signals} \\
   pause() & block until a handled or terminating signal arrives & \Cref{sec:signals} \\
   alarm(n), setitimer() & one-time or periodic timer delivering \code{SIGALRM} & \Cref{sec:signals} \\
+  sched\_yield() & give up the CPU and go to the back of the run queue & \Cref{sec:sched,sec:cs} \\
+  pipe(fd) & create a pipe: \code{fd[0]} is the read end, \code{fd[1]} the write end; reads block on empty, writes on full & \Cref{sec:ipc} \\
+  mmap() & map memory; \code{MAP\_SHARED | MAP\_ANONYMOUS} before \code{fork()} gives shared memory & \Cref{sec:ipc} \\
+  sem\_wait(), sem\_post() & POSIX semaphore \code{down()} and \code{up()}; \code{sem\_init()} with \code{pshared} $\neq 0$ for processes & \Cref{sec:cs} \\
   \bottomrule
 \end{tabular}
 \end{center}

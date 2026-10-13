@@ -1,0 +1,491 @@
+\section{Classical IPC Problems}
+\label{sec:classic}
+
+Four classical problems model the situations in which processes share resources. Each is solved below with the semaphores of \Cref{sec:cs}.
+\begin{center}
+\begin{tabular}{lp{0.6\textwidth}}
+  \toprule
+  Problem & What it models \\
+  \midrule
+  producer-consumer & access to a bounded buffer \\
+  dining philosophers & processes competing for exclusive access to a limited number of resources (e.g., I/O devices) \\
+  readers and writers & access to a database \\
+  sleeping barber & a queueing situation (``please stay on the line\dots'') \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{The Producer-Consumer Problem}
+
+\begin{definition}[Producer-Consumer Problem]
+  In the \emph{producer-consumer problem}, a.k.a.\ the \emph{bounded-buffer problem}, two processes share a fixed-size buffer. The \emph{producer} inserts data at the tail of the buffer, and the \emph{consumer} removes data from the head.
+\end{definition}
+
+Sounds familiar? It is a pipe (\Cref{sec:ipc}). The kernel solves it for pipes; the question now is how to implement it ourselves with shared memory.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[proc/.style={pill, fill=jobA, minimum width=20mm}]
+  \node[proc] (p) at (0,0) {Producer};
+  \foreach \k in {0,...,8} \draw[fill=jobC] (3.4+0.32*\k,-0.25) rectangle ++(0.32,0.5);
+  \draw[thick] (3.2,0.25) -- (6.28,0.25); \draw[thick] (3.2,-0.25) -- (6.28,-0.25);
+  \node[proc] (c) at (9.6,0) {Consumer};
+  \draw[arr] (p) -- node[above, font=\scriptsize]{produce data} (3.35,0);
+  \draw[arr] (6.28,0) -- node[above, font=\scriptsize]{consume data} (c);
+  \node[font=\scriptsize, below] at (4.84,-0.3) {bounded buffer: tail \(\leftarrow\) \dots\ \(\rightarrow\) head};
+\end{tikzpicture}
+\caption{The producer-consumer problem (after slide 198).}
+\label{fig:pcbuf}
+\end{figure}
+
+A solution must meet three requirements.
+\begin{enumerate}
+  \item \emph{Synchronization when the buffer is full.} If the producer wants to insert an item but the buffer is full, the producer should block, and the consumer should wake it up after it has consumed an item.
+  \item \emph{Synchronization when the buffer is empty.} If the consumer wants to remove an item but the buffer is empty, the consumer should block, and the producer should wake it up after it has produced an item.
+  \item \emph{Mutual exclusion.} No two processes can access the shared buffer at the same time.
+\end{enumerate}
+
+\subsubsection{Solution with three semaphores} One semaphore per requirement:
+\begin{lstlisting}
+semaphore mutex = 1;            // controls access to critical section
+semaphore empty = BUFFER_SIZE;  // counts empty buffer slots
+semaphore filled = 0;           // counts filled buffer slots
+\end{lstlisting}
+\begin{center}
+\begin{minipage}[t]{0.49\textwidth}
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize]
+1  void producer() {
+2    int item;
+3
+4    for (;;) {
+5      item = produce_item();
+6      down(&empty);  // decrement empty count
+7      down(&mutex);  // enter critical section
+8      insert(item);  // put new item in buffer
+9      up(&mutex);    // exit critical section
+10     up(&filled);   // increment filled count
+11   }
+12 }
+\end{lstlisting}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.49\textwidth}
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize]
+1  void consumer() {
+2    int item;
+3
+4    for (;;) {
+5      down(&filled);    // decrement filled count
+6      down(&mutex);     // enter critical section
+7      item = remove();  // take item from buffer
+8      up(&mutex);       // exit critical section
+9      up(&empty);       // increment empty count
+10     consume_item(item);
+11   }
+12 }
+\end{lstlisting}
+\end{minipage}
+\end{center}
+
+Why three semaphores? Because there are three requirements.
+\begin{itemize}
+  \item \code{mutex} is a binary semaphore that guarantees mutual exclusion on the buffer.
+  \item \code{empty} and \code{filled} are counting semaphores used for synchronization. \code{empty} is the number of empty slots: the producer blocks on it when it is $0$, i.e., when the buffer is full. \code{filled} is the number of filled slots: the consumer blocks on it when it is $0$, i.e., when the buffer is empty.
+\end{itemize}
+Each process \code{down()}s the semaphore that counts what it needs and \code{up()}s the one that counts what it creates. The invariant is $\code{empty} + \code{filled} = \code{BUFFER\_SIZE}$, up to the one item that is in flight between a process's \code{down()} and its \code{up()}. Note that \code{produce\_item()} and \code{consume\_item()} are outside the critical section: the critical section is kept as tight as possible.
+
+\subsubsection{Swapping lines 6 and 7 of the producer}
+Can the producer take the \code{mutex} first and then wait for an empty slot? Start with \code{mutex = 1}, \code{empty = N}, \code{filled = 0}, and let the producer run alone first (\Cref{fig:pcdeadlock}).
+\begin{enumerate}
+  \item The producer runs lines 4--11 $N$ times and fills the buffer: \code{mutex = 1}, \code{empty = 0}, \code{filled = N}.
+  \item It produces one more item (line 5), takes the mutex (line 7, \code{mutex = 0}), and blocks on \code{empty} (line 6) \emph{while holding the mutex}.
+  \item The consumer takes an item's worth of \code{filled} (line 5, \code{filled = N-1}) and blocks on \code{mutex} (line 6).
+\end{enumerate}
+Now nobody can proceed. The producer waits for the consumer to \code{up(\&empty)}, which the consumer will do only after it gets the mutex; the consumer waits for the producer to \code{up(\&mutex)}, which the producer will do only after it gets an empty slot.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[s/.style={draw, fill=#1, minimum height=5mm, inner sep=2pt, font=\scriptsize, anchor=west},
+                    s/.default=kspace,
+                    proc/.style={pill, fill=jobA, minimum width=18mm}]
+  \node[s=kspace, font=\scriptsize\bfseries, minimum width=16mm] (lp) at (-1.9,0) {Producer};
+  \node[s=tsk, font=\scriptsize\bfseries, minimum width=16mm] (lc) at (-1.9,-0.6) {Consumer};
+  \node[s] (p1) at (0,0) {Lines 4--11 for $N$ times};
+  \node[s] (p2) at (p1.east) {Line 5};
+  \node[s] (p3) at (p2.east) {Line 7};
+  \node[s] (p4) at (p3.east) {Line 6};
+  \node[s=black!15, minimum width=30mm] (p5) at (p4.east) {Blocked on \code{empty}};
+  \node[s=tsk] (c1) at (p3.west |- 0,-0.6) {Line 5};
+  \node[s=tsk] (c2) at (c1.east) {Line 6};
+  \node[s=black!15, minimum width=30mm] (c3) at (c2.east) {Blocked on \code{mutex}};
+  \node[font=\scriptsize\ttfamily, align=left, anchor=west] at (10.6,-0.3) {mutex  = 0\\empty  = 0\\filled = N-1};
+
+  \begin{scope}[yshift=-2.6cm, xshift=1.2cm]
+    \node[proc] (P) at (0,0) {Producer};
+    \node[proc] (C) at (6,0) {Consumer};
+    \node[draw, fill=orange!50, font=\scriptsize\ttfamily] (E) at (3,0.9) {empty};
+    \node[draw, fill=orange!50, font=\scriptsize\ttfamily] (M) at (3,-0.9) {mutex};
+    \draw[arr] (P) to[out=60, in=180] node[above left, font=\scriptsize]{waiting for} (E);
+    \draw[arr] (E) to[out=0, in=120] node[above right, font=\scriptsize, align=left]{held by\\(it could \code{up()} it)} (C);
+    \draw[arr] (C) to[out=-120, in=0] node[below right, font=\scriptsize]{waiting for} (M);
+    \draw[arr] (M) to[out=180, in=-60] node[below left, font=\scriptsize]{held by} (P);
+  \end{scope}
+\end{tikzpicture}
+\caption{Swapping lines 6 and 7 of the producer: the execution that gets stuck (top), and the circular wait behind it (bottom) (after slides 205--211).}
+\label{fig:pcdeadlock}
+\end{figure}
+
+\begin{definition}[Deadlock]
+  A \emph{deadlock} is a situation in which every process of a set is blocked waiting for something that only another process of the set can provide, so none of them can ever proceed. It happens when there is a \emph{circular wait}.
+\end{definition}
+
+The slides' picture is two people in two restroom stalls: one is waiting for the other's paper, the other is waiting for the first one to come out, and neither will move first. The lesson for semaphores: never block on a synchronization semaphore while holding the mutex. Deadlocks get their own treatment at the end of this deck.
+
+\begin{keypoint}[Producer-Consumer, Summary]
+  A binary semaphore is used as a lock to protect the critical sections (\emph{mutual exclusion}). Two counting semaphores monitor the status of the buffer (\emph{synchronization}). The order of the \code{down()}s matters.
+\end{keypoint}
+
+If the buffer were \emph{unbounded}, the producer would never have to wait, so the \code{empty} semaphore and the producer's \code{down(\&empty)} disappear; \code{mutex} and \code{filled} are still needed.
+
+\subsection{The Dining Philosophers Problem}
+
+\begin{definition}[Dining Philosophers Problem]
+  Five philosophers sit around a table with five bowls of instant ramen, and between each pair of neighbors lies one chopstick. A philosopher does only two things in their entire life: eating and thinking. To eat, a philosopher needs exactly two chopsticks, the ones on their left and right. Design a protocol so that they can all enjoy their life.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \foreach \k in {0,...,9} {
+    \pgfmathtruncatemacro{\half}{\k/2}
+    \pgfmathtruncatemacro{\cs}{mod((\k+1)/2,5)}
+    \ifodd\k
+      \node[draw, fill=jobC, minimum size=6mm, font=\scriptsize] (n\k) at (90+36*\k:2.2) {C\cs};
+    \else
+      \node[circle, draw, fill=jobA, minimum size=8mm, font=\scriptsize] (n\k) at (90+36*\k:2.2) {P\half};
+    \fi
+  }
+  \draw[arr, childc] (n0) to[bend left=20] (n9);
+  \draw[arr, kernc] (n0) to[bend right=20] (n1);
+  \node[font=\scriptsize, childc] at (1.9,2.4) {left};
+  \node[font=\scriptsize, kernc] at (-1.9,2.4) {right};
+  \node[anchor=west, align=left, font=\small] at (3.6,0) {For each philosopher $i$:\\[2pt]
+    \quad left chopstick $= i$\\
+    \quad right chopstick $= (i + 1) \bmod N$\\
+    \quad \code{LEFT} neighbor $= (i + N - 1) \bmod N$\\
+    \quad \code{RIGHT} neighbor $= (i + 1) \bmod N$\\[4pt]
+    States: \code{THINKING}, \\
+    \quad \code{HUNGRY} (trying to get chopsticks),\\
+    \quad \code{EATING} (critical section).};
+\end{tikzpicture}
+\caption{Modeling the dining philosophers, $N = 5$ (after slide 216).}
+\label{fig:philo}
+\end{figure}
+
+There are two requirements.
+\begin{enumerate}
+  \item \emph{Mutual exclusion.} Without it, while you are eating, the two philosophers sitting next to you will steal your chopsticks.
+  \item \emph{Synchronization.} The solution should avoid any potential deadlock or starvation.
+\end{enumerate}
+
+\subsubsection{Attempt 1: a mutex for each chopstick}
+Model each chopstick as a binary semaphore, with all \code{chopsticks[i]} initialized to $1$ (each chopstick starts on the table):
+\begin{lstlisting}
+semaphore chopsticks[N];  // all initialized to 1
+
+void take_chopstick(int i) { down(&chopsticks[i]); }
+void put_chopstick(int i)  { up(&chopsticks[i]); }
+
+1  void philosopher(int i) {
+2    for (;;) {
+3      think();
+4      take_chopstick(i);
+5      take_chopstick((i + 1) % N);
+6      eat();                        // critical section
+7      put_chopstick((i + 1) % N);
+8      put_chopstick(i);
+9    }
+10 }
+\end{lstlisting}
+This deadlocks. If all five philosophers become hungry at about the same time and each executes line 4, every philosopher holds their left chopstick, and every one of them blocks on line 5 waiting for the right chopstick, which is their right neighbor's left chopstick (\Cref{fig:philo1}). It is the circular wait of \Cref{fig:pcdeadlock}, with five processes instead of two.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=-0.48cm, l/.style={draw, fill=tsk, font=\tiny, inner sep=1.5pt, minimum height=3.5mm}]
+  \draw[thick] (0,-0.6) -- (0,4.6) -- (7.6,4.6);
+  \foreach \i in {0,...,4} {
+    \node[anchor=east, font=\scriptsize] at (-0.1,\i) {P\i};
+    \node[l, anchor=west] at (0.15+0.5*\i,\i) {L4};
+    \fill[tsk!40] (0.65+0.5*\i,\i-0.35) rectangle (2.85+0.5*\i,\i+0.35);
+    \node[l, anchor=west] at (2.85+0.5*\i,\i) {L5};
+    \fill[black!12] (3.35+0.5*\i,\i-0.35) rectangle (7.6,\i+0.35);
+    \node[font=\scriptsize\itshape, anchor=west] at (3.4+0.5*\i,\i) {Blocked};
+  }
+\end{tikzpicture}
+\caption{Attempt 1: each philosopher takes the left chopstick (line 4), then blocks forever on the right one (line 5) (after slide 218).}
+\label{fig:philo1}
+\end{figure}
+
+\subsubsection{Attempt 2: a mutex for each chopstick, with backoff}
+To avoid holding one chopstick while blocking on the other, use a \code{try\_to\_take\_chopstick()} that either succeeds and takes the chopstick, or fails and does not take it. On failure, put the left chopstick back, wait, and try again:
+\begin{lstlisting}
+1  void philosopher(int i) {
+2    for (;;) {
+3      think();
+4      take_chopstick(i);
+5      while (try_to_take_chopstick((i + 1) % N) == FAILED) {
+6        put_chopstick(i);
+7        sleep(1);           // wait for 1s and try again
+8        take_chopstick(i);
+9      }
+10     eat();                // critical section
+11     put_chopstick((i + 1) % N);
+12     put_chopstick(i);
+13   }
+14 }
+\end{lstlisting}
+There is no deadlock any more, but if the philosophers run in lockstep, they all take their left chopstick (line 4), all fail on the right one (line 5), all put the left one back (line 6), all sleep for exactly one second (line 7), and do it all over again, forever.
+
+\begin{definition}[Livelock]
+  A \emph{livelock} is a situation in which no process is blocked, yet none of them makes any progress. It is a kind of starvation (literally, here).
+\end{definition}
+
+\subsubsection{Attempt 3: random backoff}
+Replace \code{sleep(1)} by \code{sleep(random())}. The philosophers now wait for different amounts of time, so sooner or later one of them retries while its neighbor is still asleep, takes both chopsticks, and eats. This is good in most applications; in fact, many network protocols are designed this way (Ethernet's exponential backoff after a collision is the classic case). But it works only with high probability. Is there a non-randomized solution?
+
+\subsubsection{Attempt 4: a global mutex}
+Protect the whole ``take two, eat, put two'' sequence with one more semaphore:
+\begin{lstlisting}
+semaphore mutex = 1;
+semaphore chopsticks[N];  // all initialized to 1
+
+1  void philosopher(int i) {
+2    for (;;) {
+3      think();
+4      down(&mutex);
+5      take_chopstick(i);
+6      take_chopstick((i + 1) % N);
+7      eat();                        // critical section
+8      put_chopstick((i + 1) % N);
+9      put_chopstick(i);
+10     up(&mutex);
+11   }
+12 }
+\end{lstlisting}
+Any deadlock? No: only one philosopher at a time ever touches the chopsticks. Any starvation? No, provided the semaphore wakes its waiters fairly. This solution is theoretically correct, but its performance is very bad: with the global mutex there is no parallelism, and only one philosopher can be eating at any time, although five chopsticks are enough for two.
+
+\subsubsection{Attempt 5: one semaphore per philosopher}
+The issues so far: modeling each chopstick as a semaphore is intuitive, but it does not work, since we are afraid to \code{down()} a chopstick, which may lead to a deadlock. The real issue is that \emph{philosophers} need to eat, not chopsticks. So instead of worrying about chopsticks, we should guarantee: when a philosopher is eating, their left and right neighbors cannot eat.
+\begin{lstlisting}
+int state[N];         // THINKING, HUNGRY, or EATING
+semaphore mutex = 1;  // protects state[]
+semaphore sem[N];     // all initialized to 0
+
+void philosopher(int i) {
+  for (;;) {
+    think();
+    take_chopsticks(i);  // section entry: block until I take both chopsticks
+    eat();               // critical section
+    put_chopsticks(i);   // section exit
+  }
+}
+
+void take_chopsticks(int i) {
+  down(&mutex);
+  state[i] = HUNGRY;
+  test(i);        // try to take both chopsticks
+  up(&mutex);
+  down(&sem[i]);  // block if cannot take chopsticks
+}
+
+void put_chopsticks(int i) {
+  down(&mutex);
+  state[i] = THINKING;
+  test(LEFT);     // see if left neighbor can now eat
+  test(RIGHT);    // see if right neighbor can now eat
+  up(&mutex);
+}
+
+void test(int i) {
+  if (state[i] == HUNGRY &&
+      state[LEFT] != EATING &&
+      state[RIGHT] != EATING) {
+    state[i] = EATING;
+    up(&sem[i]);  // take both chopsticks
+  }
+}
+\end{lstlisting}
+Here \code{LEFT} and \code{RIGHT} are the neighbors of the \code{i} in scope, \code{(i + N - 1) \% N} and \code{(i + 1) \% N}. How it works:
+\begin{itemize}
+  \item \code{sem[i]} starts at $0$; it is not a lock but a ``you may eat now'' signal for philosopher $i$. \code{test(i)} grants it by setting \code{state[i] = EATING} and \code{up(\&sem[i])}.
+  \item A hungry philosopher calls \code{test} on itself. If both neighbors are not eating, it grants itself permission, and the \code{down(\&sem[i])} at the end of \code{take\_chopsticks} returns immediately; otherwise that \code{down} blocks.
+  \item A philosopher who finishes eating calls \code{test} on both neighbors, waking a neighbor who is hungry and can now eat.
+  \item \code{mutex} protects \code{state[]}, and is always released before blocking on \code{sem[i]}: the lesson of the producer-consumer deadlock.
+\end{itemize}
+Only philosophers are modeled, not chopsticks.
+
+\begin{example}[A Run of Attempt 5]
+  All five philosophers start \code{THINKING} (after slides 225--232).
+  \begin{center}
+  \small
+  \begin{tabular}{lcccccl}
+    \toprule
+    Event & P0 & P1 & P2 & P3 & P4 & \\
+    \midrule
+    start & T & T & T & T & T & \\
+    P0: \code{take\_chopsticks(0)} & E & T & T & T & T & P4 and P1 are not eating \\
+    P1: \code{take\_chopsticks(1)} & E & H & T & T & T & blocked on \code{mutex} first, then on \code{sem[1]} \\
+    P3: \code{take\_chopsticks(3)} & E & H & T & E & T & P2 and P4 are not eating \\
+    P0: \code{put\_chopsticks(0)} & T & E & T & E & T & \code{test(4)}: P4 not hungry; \code{test(1)}: P1 can eat \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+  (T = \code{THINKING}, H = \code{HUNGRY}, E = \code{EATING}.) P1 called \code{take\_chopsticks(1)} while P0 was inside its own \code{take\_chopsticks} holding the mutex, so P1 first blocked on \code{mutex}. Once unblocked, it found P0 eating, so \code{test(1)} failed and P1 blocked on \code{sem[1]}. When P0 finished, its \code{test(1)} set P1 to \code{EATING} and \code{up}ed \code{sem[1]}, unblocking P1. P1 and P3 now eat in parallel.
+\end{example}
+
+\begin{keypoint}[Dining Philosophers, Summary]
+  The problem is once again about mutual exclusion and synchronization: multiple processes compete for multiple resources, and each process needs two distinct resources to enter its critical section.
+  \begin{itemize}
+    \item The random backoff approach is adopted in many network protocols.
+    \item The global mutex approach is deadlock-free and starvation-free, but only one philosopher can be eating at any instant.
+    \item The final solution is deadlock-free and allows the maximum parallelism for any number of philosophers. However, a philosopher can still starve to death: if P0 and P2 take turns eating so that one of them is always eating, P1's \code{test} never succeeds.
+  \end{itemize}
+\end{keypoint}
+
+\subsection{The Readers and Writers Problem}
+
+\begin{definition}[Readers and Writers Problem]
+  Processes access a database. Multiple processes are allowed to \emph{read} the database at the same time, but if a process is \emph{writing} the database, no other process may access it. How should the readers and writers be programmed?
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[rd/.style={pill, fill=kernc!30, minimum width=16mm}, wr/.style={pill, fill=tsk!60, draw=black!40, text=black!50, minimum width=16mm}]
+  \node[cylinder, shape border rotate=90, draw, fill=jobC, minimum width=12mm, minimum height=14mm, aspect=0.3] (db) at (0,0) {};
+  \node[font=\scriptsize, below=1mm of db] {database};
+  \node[rd] (r1) at (-3,1.2) {Reader};
+  \node[rd] (r2) at (-1.6,2.2) {Reader};
+  \node[rd] (r3) at (0,2.8) {Reader};
+  \node[wr] (w1) at (2,2.2) {Writer};
+  \node[wr] (w2) at (3.2,1.2) {Writer};
+  \foreach \r in {r1,r2,r3} \draw[arr] (db) -- (\r);
+  \foreach \w in {w1,w2} {
+    \draw[arr, densely dashed, black!50] (\w) -- (db);
+    \node[sigc, font=\bfseries] at ($(\w)!0.5!(db)$) {$\times$};
+  }
+\end{tikzpicture}
+\caption{Readers may share the database; writers are excluded while anyone reads (after slides 235--236).}
+\label{fig:rw}
+\end{figure}
+
+The requirements are:
+\begin{itemize}
+  \item \emph{mutual exclusion}: the database is a shared resource;
+  \item \emph{synchronization}: while a reader is reading, other readers may read but no writer may write; while a writer is writing, no reader or writer may access the database;
+  \item \emph{concurrency}: concurrent access from multiple readers should be allowed.
+\end{itemize}
+
+\subsubsection{Attempt 1: a mutex for the database}
+Treat every access as a critical section protected by \code{semaphore db = 1}: each reader and each writer does \code{down(\&db)} before accessing the database and \code{up(\&db)} after. No two processes can be in their critical sections at the same time, so it is correct, but it violates the concurrency requirement: two readers cannot read together.
+
+\subsubsection{Attempt 2: allow concurrent readers}
+Readers do not need to exclude one another; but as long as there is a reader in the system, writers must be excluded. So the \emph{first} reader that comes in should \code{down(\&db)}, and the \emph{last} reader that leaves should \code{up(\&db)}. We just need to count the readers.
+\begin{lstlisting}
+semaphore db = 1;      // controls access to the database
+semaphore mutex = 1;   // controls access to "reader_count"
+int reader_count = 0;  // # of processes reading or wanting to read
+
+void reader() {
+  for (;;) {
+    down(&mutex);
+    if (++reader_count == 1)
+      down(&db);  // the first reader locks db
+    up(&mutex);
+    data = read_database();  // critical section
+    down(&mutex);
+    if (--reader_count == 0)
+      up(&db);    // the last reader unlocks db
+    up(&mutex);
+    consume_data(data);
+  }
+}
+
+void writer() {
+  for (;;) {
+    data = produce_data();
+    down(&db);             // locks db
+    write_database(data);  // critical section
+    up(&db);               // unlocks db
+  }
+}
+\end{lstlisting}
+\code{reader\_count} is itself shared, so it needs its own \code{mutex}. If a writer holds \code{db}, the first reader blocks on \code{down(\&db)} while holding \code{mutex}, and later readers block on \code{mutex}; when the writer finishes, they all get in. Holding \code{mutex} while blocking is safe here because the writer never touches \code{mutex}, so there is no circular wait.
+
+This solution meets all the requirements, but it gives readers a higher priority than writers: once one reader is in, new readers can keep joining. As long as there is a steady supply of readers, \code{reader\_count} never drops to $0$, and the writers starve.
+
+\subsection{The Sleeping Barber Problem}
+
+\begin{definition}[Sleeping Barber Problem]
+  A barber shop has one barber, one barber chair, and $n$ chairs for waiting customers. If there are no customers, the barber falls asleep in the barber chair. When a customer arrives, they wake up the barber. If more customers arrive while the barber is busy, they wait as long as there are empty chairs, and leave the shop if all chairs are full. How should the barber and the customers be programmed?
+\end{definition}
+
+The problem models queueing situations in the \emph{client-server model}. There is one long-running server process (the barber) and many transient client processes (the customers). The shared resources are the server itself, which is shared by all clients and serves one at a time, and a limited wait queue of $n$ chairs; when the queue is full, new clients are dropped. We need mutual exclusion and proper synchronization.
+
+\begin{lstlisting}
+semaphore barbers = 0;    // # of barbers ready to cut hair
+semaphore customers = 0;  // # of customers waiting for service (not being cut)
+int waiting = 0;          // same as above (there's no way to read a semaphore's value)
+semaphore mutex = 1;      // controls access to "waiting"
+
+void barber() {
+  for (;;) {
+    down(&customers);  // sleep if no customer
+    down(&mutex);
+    --waiting;
+    up(&barbers);      // a barber is ready to serve
+    up(&mutex);
+    cut_hair();        // outside critical section
+  }
+}
+
+void customer() {
+  down(&mutex);
+  if (waiting < NUM_CHAIRS) {
+    ++waiting;
+    up(&customers);  // wake up barber if needed
+    up(&mutex);
+    down(&barbers);  // wait if no barber is free
+    get_haircut();   // outside critical section
+  } else {
+    up(&mutex);      // leave if the shop is full
+  }
+}
+\end{lstlisting}
+\begin{itemize}
+  \item \code{customers} counts the waiting customers; the barber sleeps on it when it is $0$. Each arriving customer \code{up}s it, waking the barber if needed.
+  \item \code{barbers} counts barbers that are ready to cut hair. It starts at $0$, not $1$, because the barber is \emph{not} ready until it has picked a customer: the barber \code{up}s it once per haircut, after taking a customer from the waiting count, and the customer blocks on it until then. Starting at $1$ would hand out one permit too many: the first customer would pass without the barber having picked them, and the barber's \code{up()} for that customer would then let a second customer into \code{get\_haircut()} while the first is still in the chair.
+  \item \code{waiting} duplicates the value of \code{customers}, because there is no way to read a semaphore's value, and a customer must check whether a chair is free before deciding to wait. \code{mutex} protects it.
+\end{itemize}
+The solution is free of data races and deadlocks. Can a customer starve? Every customer who sits down is counted in \code{customers}, and the barber serves one per \code{up(\&barbers)}, so the shop as a whole keeps serving. But which blocked customer the \code{up(\&barbers)} wakes is up to the semaphore. If it is not FIFO, a customer who sat down early can keep being passed over by later arrivals; with a FIFO semaphore, no one starves.
+
+\subsection{Summary}
+
+\begin{keypoint}[IPC Problems]
+  IPC problems involve one or more shared resources and multiple processes that must be synchronized. A good solution needs to
+  \begin{itemize}
+    \item guarantee mutual exclusion;
+    \item guarantee proper synchronization among the processes;
+    \item be deadlock-free;
+    \item be starvation-free.
+  \end{itemize}
+\end{keypoint}
+
+\subsection{(SUPPLEMENT) Further Topics}
+\label{sec:classic-further}
+
+\paragraph{Ring buffer implementation.} With one producer and one consumer, \code{insert} and \code{remove} on an array of size $N$ are \code{buf[tail] = item; tail = (tail + 1) \% N;} and \code{item = buf[head]; head = (head + 1) \% N;}. The producer touches only \code{tail} and the consumer only \code{head}, and \code{empty}/\code{filled} already keep them from overtaking each other, so with exactly one producer and one consumer the \code{mutex} can be dropped (given a correct memory model, \Cref{sec:cs-further}). With several producers or several consumers it is needed, since two producers would race on \code{tail}.
+
+\paragraph{Breaking the circular wait by ordering resources.} Attempt~1 of the dining philosophers deadlocks because every philosopher picks up chopsticks in the same rotational direction. If every philosopher instead takes the \emph{lower-numbered} chopstick first, philosopher 4 takes chopstick 0 before chopstick 4, the cycle is broken, and no deadlock is possible: a total order on resources rules out circular waits. This is one of the deadlock-prevention strategies that the deck returns to after threads; the resource-ordering solution goes back to Dijkstra, who posed the problem in 1965.
+
+\paragraph{Writers-preference.} To stop writers from starving, add a semaphore that a waiting writer takes to bar \emph{new} readers from entering, plus a \code{writer\_count} protected like \code{reader\_count}: the first waiting writer locks out new readers, the last leaving writer lets them in. Now readers can starve. A fair version puts all arrivals through one FIFO ``turnstile'' semaphore so that each process is served in arrival order. In practice, \code{pthread\_rwlock\_t} provides a readers-writer lock, and its preference policy depends on the implementation.
+
+\paragraph{Monitors and condition variables.} Semaphores are easy to misuse, as the swapped producer lines show. A \emph{monitor} packages shared data with the procedures that access it and guarantees that only one process is active inside at a time; waiting is done on \emph{condition variables} with \code{wait} (which atomically releases the monitor lock and sleeps) and \code{signal}. Java's \code{synchronized} methods with \code{wait()}/\code{notify()}, and \code{pthread\_mutex\_t} with \code{pthread\_cond\_t}, are monitors. Because a woken process may find the condition false again, the idiom is always \code{while (!condition) wait(...)}, never \code{if}~\cite[Section~2.3.7]{MOS}.
