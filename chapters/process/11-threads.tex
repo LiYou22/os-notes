@@ -1,0 +1,378 @@
+\section{Threads}
+\label{sec:threads}
+
+So far every process has had exactly one flow of execution. A thread separates that flow from the rest of the process, so that one process can run several flows at once.
+
+\begin{definition}[Thread]
+  A \emph{thread} is an execution entity within a process. A \emph{single-threaded} process has one; a \emph{multithreaded} process has more than one, all running in the same address space.
+\end{definition}
+
+A word processor, for example, may have one thread interacting with the user, one formatting text in the background, and one handling automatic backups.
+
+\subsection{What a Thread Owns}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[sg/.style={draw, minimum height=5.5mm, inner sep=1pt, font=\scriptsize},
+                    th/.style={draw=orange!80!black, fill=orange!45, rounded corners=3pt},
+                    wavy/.style={decorate, decoration={snake, amplitude=0.6mm, segment length=2mm}, thick}]
+  % single-threaded
+  \fill[tsk, rounded corners=6pt] (-0.3,-0.6) rectangle (2.9,3.5);
+  \node[font=\scriptsize\bfseries] at (1.3,3.2) {Single-threaded process};
+  \node[sg, fill=kernc!45, minimum width=26mm] at (1.3,2.6) {Code};
+  \node[sg, fill=cyan!25, minimum width=26mm] at (1.3,1.95) {Data};
+  \node[sg, fill=jobC, minimum width=26mm] at (1.3,1.3) {Heap};
+  \draw[th] (0,-0.45) rectangle (2.6,0.65);
+  \node[sg, fill=jobA, minimum width=26mm] at (1.3,0.65) {Stack};
+  \draw[wavy] (0.25,0.25) -- (0.25,-0.35);
+  \node[font=\scriptsize] at (1.4,-0.2) {Thread};
+  % multithreaded
+  \begin{scope}[xshift=3.6cm]
+    \fill[tsk, rounded corners=6pt] (-0.3,-0.6) rectangle (8.1,3.5);
+    \node[font=\scriptsize\bfseries] at (3.9,3.2) {Multithreaded process};
+    \node[sg, fill=kernc!45, minimum width=78mm] at (3.9,2.6) {Code};
+    \node[sg, fill=cyan!25, minimum width=78mm] at (3.9,1.95) {Data};
+    \node[sg, fill=jobC, minimum width=78mm] at (3.9,1.3) {Heap};
+    \foreach \x in {0,2.7,5.4} {
+      \draw[th] (\x,-0.45) rectangle (\x+2.4,0.65);
+      \node[sg, fill=jobA, minimum width=24mm] at (\x+1.2,0.65) {Stack};
+      \draw[wavy] (\x+0.25,0.25) -- (\x+0.25,-0.35);
+      \node[font=\scriptsize] at (\x+1.3,-0.2) {Thread};
+    }
+  \end{scope}
+\end{tikzpicture}
+\caption{The threads of a process share its code, data, and heap; each thread has its own stack (after slides 248--250).}
+\label{fig:threads}
+\end{figure}
+
+\Cref{fig:threads} shows what is shared and what is not.
+\begin{itemize}
+  \item \emph{Code.} All threads share the same code. A new thread starts in a specific \emph{thread function}, which can call other functions and make system calls, but it never returns to a caller: when it finishes, the thread ends.
+  \item \emph{Data and heap.} All threads share the same global variables and dynamically allocated memory. So a multithreaded process has race conditions too: \code{counter++} on a global variable from two threads goes wrong in exactly the way two processes went wrong on shared memory in \Cref{sec:ipc}.
+  \item \emph{Stack.} Each thread has its own stack for its local variables. The stacks are still in the one shared address space, so a thread that knows an address on another thread's stack can read and write it; nothing but convention keeps it out.
+\end{itemize}
+
+\subsection{Why Threads?}
+
+\begin{itemize}
+  \item \emph{Multitasking within a process.} One thread can wait for user input while another performs computation: when the thread reading from the keyboard blocks, the thread formatting text keeps running. This gives better performance and responsiveness.
+  \item \emph{Cheap.} Threads are 10--100$\times$ faster to create and destroy than processes, since there is no new address space to build.
+  \item \emph{Easy sharing.} Threads share the same address space, so sharing data needs no pipes or shared-memory setup: a pointer is enough.
+\end{itemize}
+
+\subsection{Thread Models}
+
+Where are threads implemented? There are three models, distinguished by how many kernel-visible threads back the threads the program sees (\Cref{fig:threadmodels}).
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[wavy/.style={decorate, decoration={snake, amplitude=0.5mm, segment length=1.8mm}, thick},
+                    pr/.style={fill=tsk, draw=tskedge, rounded corners=4pt},
+                    rt/.style={draw, fill=cyan!25, font=\tiny, inner sep=1.5pt},
+                    tb/.style={draw, fill=orange!45, font=\tiny, inner sep=1.5pt},
+                    sp/.style={font=\tiny\itshape, anchor=north east}]
+  \foreach \px/\title in {0/Many-to-one, 4.9/One-to-one, 9.8/Many-to-many} {
+    \begin{scope}[xshift=\px cm]
+      \fill[uspace] (0,1.4) rectangle (4.5,4.2);
+      \fill[kspace] (0,0) rectangle (4.5,1.4);
+      \draw (0,0) rectangle (4.5,4.2);
+      \draw (0,1.4) -- (4.5,1.4);
+      \node[sp] at (4.45,4.15) {User space};
+      \node[sp] at (4.45,1.35) {Kernel space};
+      \node[font=\scriptsize\bfseries] at (2.25,4.55) {\title};
+    \end{scope}
+  }
+  % many-to-one
+  \foreach \cx/\n in {1.1/3, 3.2/4} {
+    \fill[pr] (\cx-0.85,1.65) rectangle (\cx+0.85,3.75);
+    \node[font=\tiny] at (\cx,3.57) {Process};
+    \foreach \k in {1,...,\n} \draw[wavy] (\cx-0.2*\n+0.4*\k-0.2,3.35) -- ++(0,-0.7);
+    \node[rt, minimum width=14mm, minimum height=6mm, align=center] at (\cx,2.15) {Runtime\\thread table};
+  }
+  \node[tb, fill=tsk] at (3.4,0.3) {Process table};
+  % one-to-one
+  \begin{scope}[xshift=4.9cm]
+    \foreach \cx/\n in {0.85/3, 2.55/2} {
+      \fill[pr] (\cx-0.75,2.0) rectangle (\cx+0.75,3.75);
+      \node[font=\tiny] at (\cx,3.57) {Process};
+      \foreach \k in {1,...,\n} \draw[wavy] (\cx-0.25*\n+0.5*\k-0.25,3.35) -- ++(0,-2.8);
+    }
+    \node[tb, fill=tsk] at (1.3,0.25) {Process table};
+    \node[tb] at (3.5,0.25) {Thread table};
+  \end{scope}
+  % many-to-many
+  \begin{scope}[xshift=9.8cm]
+    \fill[pr] (0.25,2.0) rectangle (2.55,3.75);
+    \node[font=\tiny] at (1.4,3.57) {Process};
+    \node[rt, minimum width=20mm, minimum height=4mm] (rt) at (1.4,2.5) {Runtime};
+    \foreach \x in {0.6,0.85,1.1} \draw[wavy] (\x,3.35) -- (0.85,2.7);
+    \foreach \x in {1.75,2.0} \draw[wavy] (\x,3.35) -- (1.9,2.7);
+    \draw[wavy] (0.85,2.3) -- (0.85,0.6);
+    \draw[wavy] (1.9,2.3) -- (1.9,0.6);
+    \node[font=\tiny, align=left, anchor=west] at (2.65,3.0) {many user\\threads on a\\kernel thread};
+    \node[font=\tiny, anchor=west] at (2.15,0.75) {kernel threads};
+    \node[tb, fill=tsk] at (1.3,0.25) {Process table};
+    \node[tb] at (3.5,0.25) {Thread table};
+  \end{scope}
+\end{tikzpicture}
+\caption{The three thread models; each wavy line is a thread. In the many-to-one model the kernel sees only processes (after slides 253--255).}
+\label{fig:threadmodels}
+\end{figure}
+
+\subsubsection{Many-to-one: threads in user space}
+The threads library is entirely in user space, and the kernel knows nothing about threads (they are called \emph{green threads}). Each process carries a runtime with its own thread table and switches among its threads by itself. This is how earlier operating systems did it.
+\begin{itemize}
+  \item \emph{Pros.} It does not need OS support. It is fast: a thread switch is a function call inside the runtime, with no trap, no context switch, and no cache flush.
+  \item \emph{Cons.} The kernel schedules the process as one unit, so when one thread invokes a blocking system call, all threads are blocked; likewise a page fault (later chapters) in one thread blocks the entire process. There is also no preemption among threads, because clock interrupts go to the kernel, not to the runtime: a thread runs until it gives up the CPU voluntarily.
+\end{itemize}
+
+\subsubsection{One-to-one: threads in the kernel}
+The kernel manages all the threads: each thread is mapped to a kernel thread, and the kernel keeps a thread table next to its process table. Most modern operating systems do this; Linux's pthreads library (NPTL) is one-to-one.
+\begin{itemize}
+  \item \emph{Pros.} When a thread blocks, the kernel can schedule another thread, from the same process or a different one.
+  \item \emph{Cons.} Creating and destroying threads is more expensive, since each one is a system call. And the process-level mechanisms of this chapter now have to answer thread-level questions:
+  \begin{itemize}
+    \item \emph{What happens when a multithreaded process forks?} In POSIX, the child gets a copy of the whole address space but only one thread, the one that called \code{fork()}. Any mutex that another thread held at that moment is copied in its locked state, and nobody in the child will ever unlock it. So between \code{fork()} and \code{exec*()}, the child of a multithreaded process should call only async-signal-safe functions (\code{man 2 fork}).
+    \item \emph{When a signal comes in, which thread handles it?} A signal sent to the process (e.g., by \code{kill()}) is delivered to an arbitrary thread that does not block it. A signal caused by a thread's own action, such as the \code{SIGSEGV} of a bad memory access, or one sent with \code{pthread\_kill()}, goes to that particular thread (\code{man 7 signal}).
+  \end{itemize}
+\end{itemize}
+
+\subsubsection{Many-to-many: a hybrid}
+A threads library in user space multiplexes user-level threads onto kernel threads. It is a two-level model, implemented in many language runtimes (Erlang, Go, Haskell, the JVM\dots).
+\begin{itemize}
+  \item \emph{Pros.} The best of both worlds: user threads are cheap to create and switch, and a blocking call ties up only one kernel thread. There is no restriction on the number of threads.
+  \item \emph{Cons.} It is more complex to implement: two schedulers, one in the runtime and one in the kernel, must cooperate.
+\end{itemize}
+
+\subsection{POSIX Threads}
+
+The POSIX threads API (\code{man 7 pthreads}) has a thread counterpart for each process call of this chapter:
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+  Description & Process & Thread \\
+  \midrule
+  Process/thread identification & \code{pid\_t} & \code{pthread\_t} \\
+  Get process/thread ID & \code{getpid()} & \code{pthread\_self()} \\
+  Create a new process/thread & \code{fork()} & \code{pthread\_create()} \\
+  Terminate the calling process/thread & \code{exit()} & \code{pthread\_exit()} \\
+  Wait for a specific process/thread to exit & \code{waitpid()} & \code{pthread\_join()} \\
+  Send a signal to a process/thread & \code{kill()} & \code{pthread\_kill()} \\
+  Release the CPU to let another process/thread run & \code{sched\_yield()} & \code{pthread\_yield()} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+\code{pthread\_yield()} is non-standard and deprecated in glibc; threads call \code{sched\_yield()} as well.
+
+\begin{example}[\code{thread.c}]
+\label{ex:pthread}
+\begin{lstlisting}[morekeywords={pthread_t}]
+1  void *greet(void *name) {
+2    printf("Hello, %s!\n", (char *)name);
+3    pthread_exit(NULL);
+4  }
+5
+6  int main() {
+7    pthread_t tid;
+8    pthread_create(&tid, NULL, greet, "world");
+9    printf("I am still running...\n");
+10   pthread_join(tid, NULL);
+11 }
+\end{lstlisting}
+\begin{lstlisting}[style=sh]
+$ gcc -pthread thread.c -o thread
+$ ./thread
+I am still running...
+Hello, world!
+\end{lstlisting}
+  \code{pthread\_create()} starts a new thread in the thread function \code{greet}, passing \code{"world"} through its \code{void *} argument (a thread function takes and returns a \code{void *}, so any data can be passed by pointer). Unlike \code{fork()}, it does not return twice: the main thread continues at line 9 while \code{greet} runs alongside it. \code{pthread\_join()} then blocks the main thread until \code{greet} calls \code{pthread\_exit()} (\Cref{fig:pthread}). The order of the two lines of output is up to the scheduler; the run above is just one possibility. Without the join, \code{main} could return first, and returning from \code{main} exits the whole process, killing \code{greet} with it.
+\end{example}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \timeaxis{7}{1.9}
+  \node[lane, parentc] at (-0.1,1.4) {main thread};
+  \node[lane, childc] at (-0.1,0.6) {greet thread};
+  \draw[run, parentc] (0,1.4) -- (3.6,1.4);
+  \draw[blocked, parentc] (3.6,1.4) -- (5.2,1.4);
+  \draw[run, parentc] (5.2,1.4) -- (6.4,1.4);
+  \draw[run, childc] (1.2,0.6) -- (5.2,0.6);
+  \draw[arr, childc] (1.2,1.4) -- (1.2,0.68);
+  \draw[evt] (1.2,1.4) -- (1.2,1.75) node[above, tl]{\code{pthread\_create()}};
+  \draw[evt] (3.6,1.4) -- (3.6,1.75) node[above, tl]{\code{pthread\_join()}};
+  \draw[evt] (5.2,0.6) -- (5.2,1.4);
+  \node[tl, below] at (5.2,0.55) {\code{pthread\_exit()}};
+\end{tikzpicture}
+\caption{The run of \code{thread.c}: \code{pthread\_join()} blocks the main thread until \code{greet} exits (after slide 257).}
+\label{fig:pthread}
+\end{figure}
+
+\subsection{Synchronization in pthreads}
+
+\subsubsection{Mutexes}
+A mutex object of type \code{pthread\_mutex\_t} is similar to a binary semaphore. It cannot be used as a counting semaphore.
+\begin{center}
+\small
+\begin{tabular}{lll}
+  \toprule
+  Description & pthread mutex & Equivalent semaphore \\
+  \midrule
+  Initialize & \code{pthread\_mutex\_t mutex = PTHREAD\_MUTEX\_INITIALIZER;} & \code{semaphore mutex = 1;} \\
+  Lock (enter) & \code{pthread\_mutex\_lock(\&mutex);} & \code{down(\&mutex);} \\
+  Unlock (exit) & \code{pthread\_mutex\_unlock(\&mutex);} & \code{up(\&mutex);} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsubsection{Semaphores}
+A POSIX semaphore of type \code{sem\_t} is a counting semaphore, the \code{semaphore} of \Cref{sec:cs}:
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+  Description & POSIX semaphore & Equivalent ``2250'' semaphore \\
+  \midrule
+  Initialize & \code{sem\_t s; sem\_init(\&s, 0, initial\_value);} & \code{semaphore s = initial\_value;} \\
+  Down & \code{sem\_wait(\&s);} & \code{down(\&s);} \\
+  Up & \code{sem\_post(\&s);} & \code{up(\&s);} \\
+  Destroy & \code{sem\_destroy(\&s);} & --- \\
+  \bottomrule
+\end{tabular}
+\end{center}
+The second argument of \code{sem\_init()} is $0$ for a semaphore shared by the threads of one process; a nonzero value shares it between processes, in which case the \code{sem\_t} itself must live in shared memory (\code{man 3 sem\_init}).
+
+\subsubsection{Condition variables}
+Semaphores are a convenient and effective synchronization mechanism, but using them incorrectly causes hard-to-detect timing errors, as the swapped \code{down()}s of the producer showed in \Cref{sec:classic}. The pthread library provides another mechanism, which separates the lock from the waiting.
+
+\begin{definition}[Condition Variable]
+  A \emph{condition variable} (type \code{pthread\_cond\_t}) lets a thread wait for a condition to become true. It is always used together with a mutex that protects the state the condition is about.
+  \begin{itemize}
+    \item \code{pthread\_cond\_wait(\&cond, \&mutex)}: the calling thread must hold \code{mutex}. When it is about to block, \code{mutex} is unlocked, automatically and atomically; when it is unblocked, \code{mutex} is locked again, automatically and atomically, before the call returns.
+    \item \code{pthread\_cond\_signal(\&cond)}: if some threads are blocked on \code{cond}, at least one of them is unblocked. If no thread is blocked on \code{cond}, the signal is lost.
+  \end{itemize}
+  It is initialized with \code{pthread\_cond\_t cond = PTHREAD\_COND\_INITIALIZER;}.
+\end{definition}
+
+Releasing the mutex inside \code{pthread\_cond\_wait()} is what prevents the producer-consumer deadlock: a waiting thread never blocks while holding the mutex, so there is no \emph{hold and wait} (\Cref{sec:deadlock}). And a lost signal is the big difference from a semaphore, whose \code{up()} is remembered in its value even when nobody is waiting; a condition variable has no memory, so the condition itself must be kept in ordinary variables and checked under the mutex.
+
+\begin{example}[Producer-Consumer with pthreads]
+  The bounded buffer of \Cref{sec:classic} needs two conditions: the producer waits until the buffer is not full, and the consumer waits until it is not empty.
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize, morekeywords={pthread_mutex_t,pthread_cond_t}]
+pthread_mutex_t mutex     = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t  not_full  = PTHREAD_COND_INITIALIZER;
+pthread_cond_t  not_empty = PTHREAD_COND_INITIALIZER;
+\end{lstlisting}
+\begin{center}
+\begin{minipage}[t]{0.49\textwidth}
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize]
+1  void producer() {
+2    int item;
+3    for (;;) {
+4      item = produce_item();
+5      pthread_mutex_lock(&mutex);
+6      while (count == BUFFER_SIZE)
+7        pthread_cond_wait(&not_full, &mutex);
+8      insert(item);  // increments count
+9      pthread_cond_signal(&not_empty);
+10     pthread_mutex_unlock(&mutex);
+11   }
+12 }
+\end{lstlisting}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.49\textwidth}
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize]
+1  void consumer() {
+2    int item;
+3    for (;;) {
+4      pthread_mutex_lock(&mutex);
+5      while (count == 0)
+6        pthread_cond_wait(&not_empty, &mutex);
+7      item = remove();  // decrements count
+8      pthread_cond_signal(&not_full);
+9      pthread_mutex_unlock(&mutex);
+10     consume_item(item);
+11   }
+12 }
+\end{lstlisting}
+\end{minipage}
+\end{center}
+  The state is the shared \code{count}, read and written only under \code{mutex}. The producer checks the condition (line 6), waits if the buffer is full, inserts, and signals \code{not\_empty} in case the consumer is waiting; the consumer is symmetric.
+
+  Why \code{while} rather than \code{if}? Being woken up is only a hint that the condition \emph{may} hold. Between the signal and the moment the woken thread reacquires the mutex, another thread can take the mutex first and change \code{count} (say, a second consumer empties the buffer again), and POSIX also allows spurious wakeups. So the thread re-checks the condition after every wakeup.
+\end{example}
+
+\begin{example}[Semaphores from Mutexes and Condition Variables]
+  A semaphore is a counter plus waiting, and that is exactly a variable, a mutex, and a condition variable:
+\begin{lstlisting}[morekeywords={pthread_mutex_t,pthread_cond_t}]
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t  cond  = PTHREAD_COND_INITIALIZER;
+int value;
+
+void down() {
+  pthread_mutex_lock(&mutex);
+  while (value == 0)
+    pthread_cond_wait(&cond, &mutex);
+  --value;
+  pthread_mutex_unlock(&mutex);
+}
+
+void up() {
+  pthread_mutex_lock(&mutex);
+  ++value;
+  pthread_cond_signal(&cond);
+  pthread_mutex_unlock(&mutex);
+}
+\end{lstlisting}
+  \code{up()} increments \code{value} even if no one is waiting, so the signal that may be lost is backed by the count that is not: a later \code{down()} sees \code{value > 0} and does not wait at all.
+\end{example}
+
+\subsection{Thread Pools}
+
+\begin{definition}[Thread Pool]
+  A \emph{thread pool} is a design pattern for concurrent execution: a fixed set of worker threads is created at startup and waits for tasks to be dispatched from a task queue. Each idle worker takes the next task from the queue, runs it, and goes back to waiting.
+\end{definition}
+
+If a program has a lot of short-lived tasks, creating and destroying a thread for each one is time-consuming. A pool pays that cost once, which increases performance and avoids latency when a task arrives. The task queue is a producer-consumer buffer (\Cref{fig:threadpool}): whoever submits tasks is the producer, and the workers are the consumers.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[task/.style={draw, fill=jobB, minimum size=4mm, inner sep=0pt},
+                    done/.style={draw, fill=jobC, minimum size=4mm, inner sep=0pt},
+                    wk/.style={circle, draw, fill=jobA, minimum size=6mm, inner sep=0pt, font=\tiny}]
+  \foreach \k in {0,...,5} \node[task] at (0.5*\k,0) {};
+  \node[font=\scriptsize] at (1.25,-0.45) {Task queue};
+  \fill[tsk, rounded corners=4pt] (3.8,-1.1) rectangle (6.6,1.1);
+  \node[font=\scriptsize] at (5.2,-1.35) {Thread pool (created at startup)};
+  \foreach \k/\y in {1/0.6, 2/0, 3/-0.6} {
+    \node[wk] (w\k) at (5.2,\y) {T\k};
+    \draw[arr] (2.75,0) -- (w\k.west);
+    \draw[arr] (w\k.east) -- (7.15,0);
+  }
+  \foreach \k in {0,...,4} \node[done] at (7.4+0.5*\k,0) {};
+  \node[font=\scriptsize] at (8.4,-0.45) {Completed tasks};
+\end{tikzpicture}
+\caption{A thread pool: workers take tasks from the queue and run them (after slide 264).}
+\label{fig:threadpool}
+\end{figure}
+
+\subsection{Thread Safety}
+
+Some data structures and functions are designed for single-threaded execution. \code{strtok()}, for example, keeps a pointer into the string being parsed in a static variable between calls, so two threads tokenizing two strings at the same time overwrite each other's position. It is not \emph{thread safe}.
+
+\begin{definition}[Reentrant Function]
+  A function is \emph{reentrant} if multiple invocations can safely run concurrently: it may be interrupted in the middle of its execution and then safely be invoked again before its previous invocations complete. This requires keeping all state information in variables local to each invocation, rather than in static or global variables.
+\end{definition}
+
+Making a function reentrant is one way to make it thread safe. \code{strtok\_r()} is the reentrant version of \code{strtok()}: it takes an extra argument, a pointer owned by the caller, in which it keeps its context between successive calls that parse the same string.
+\begin{lstlisting}
+char *save;  // the caller's own parsing state
+for (char *tok = strtok_r(line, " ", &save); tok != NULL;
+     tok = strtok_r(NULL, " ", &save))
+  puts(tok);
+\end{lstlisting}
+
+\subsection{Summary}
+
+\begin{keypoint}[Threads]
+  Multiple threads are a convenient way to get multitasking within a process and a simple shared-memory environment. The price is that you have to take care of mutual exclusion, synchronization, and thread safety yourself.
+\end{keypoint}

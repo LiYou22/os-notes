@@ -70,26 +70,29 @@ When it is time for a process to give up the CPU, the scheduler in the kernel ch
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}
-  \node[field, minimum width=24mm] (pc) at (0,0) {Program counter};
-  \node[field, minimum width=24mm, below=1mm of pc] (rg) {Registers};
-  \node[font=\small\bfseries, above=1mm of pc] (cpu) {CPU};
-  \begin{scope}[on background layer]
-    \node[fit=(pc)(rg)(cpu), fill=initc!25, draw=initc!70, rounded corners=3pt] {};
-  \end{scope}
-  \node[font=\scriptsize] (uat) at (5.4,2.9) {Process A};
+  % user space: two address spaces side by side
+  \node[font=\scriptsize] (uat) at (4.4,2.9) {Process A};
   \fieldstack[seg, fill=tsk, minimum width=17mm]{ua}{uat.south}{Code, Data, Heap, \dots, Stack}
-  \node[font=\scriptsize] (ubt) at (9.0,2.9) {Process B};
+  \node[font=\scriptsize] (ubt) at (8.0,2.9) {Process B};
   \fieldstack[seg, fill=tsk, minimum width=17mm]{ub}{ubt.south}{Code, Data, Heap, \dots, Stack}
   \node[font=\scriptsize\bfseries, above=1mm of $(uat.north)!0.5!(ubt.north)$] (us) {User space};
-  \node[font=\scriptsize\bfseries] (ks) at (7.2,-0.75) {Kernel space};
-  \fieldstack[field, minimum width=36mm]{k}{ks.south}{Scheduler, \ts{} of A, \ts{} of B}
-  \begin{scope}[on background layer]
-    \node[fit=(us)(ua-5)(ub-5), fill=uspace, draw=parentc, inner sep=4pt] {};
-    \node[fit=(ks)(k-3), fill=kspace, draw=kernc, inner sep=4pt] {};
-  \end{scope}
-  \draw[arr, sigc] (rg.east) to[out=0, in=180] node[above, pos=0.55, font=\scriptsize]{(1) save} (k-2.west);
-  \draw[arr, kernc] (k-3.west) to[out=180, in=-30] node[below, pos=0.4, font=\scriptsize]{(2) restore} (rg.south east);
   \draw[arr, dashed] (ua-3.east) -- node[above, font=\scriptsize, align=center]{(3) switch\\memory map} (ub-3.west);
+  % kernel space, same width as user space
+  \node[font=\scriptsize\bfseries] (ks) at (6.2,-0.85) {Kernel space};
+  \fieldstack[field, minimum width=53mm]{k}{ks.south}{Scheduler, \ts{} of A, \ts{} of B}
+  \begin{scope}[on background layer]
+    \node[fit=(us)(ua-1)(ua-5)(ub-5), fill=uspace, draw=parentc, inner sep=5pt] {};
+    \node[fit=(ks)(k-1)(k-3), fill=kspace, draw=kernc, inner sep=5pt] {};
+  \end{scope}
+  % CPU, level with the task_structs
+  \node[field, minimum width=24mm] (rg) at ($(k-2.south)+(-6.4,0)$) {Registers};
+  \node[field, minimum width=24mm, above=1mm of rg] (pc) {Program counter};
+  \node[font=\small\bfseries, above=1mm of pc] (cpu) {CPU};
+  \begin{scope}[on background layer]
+    \node[fit=(pc)(rg)(cpu), fill=initc!25, draw=initc!70, rounded corners=3pt, inner sep=4pt] {};
+  \end{scope}
+  \draw[arr, sigc] ($(rg.east)+(0,0.1)$) -- node[above, sloped, font=\scriptsize]{(1) save} (k-2.west);
+  \draw[arr, kernc] (k-3.west) -- node[below, sloped, font=\scriptsize]{(2) restore} ($(rg.east)+(0,-0.1)$);
 \end{tikzpicture}
 \caption{A context switch from process A to process B (after slides 121--123): (1) save A's registers in its \ts{}; (2) restore B's registers; (3) switch to B's address space.}
 \label{fig:ctxsw}

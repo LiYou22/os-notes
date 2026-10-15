@@ -1,0 +1,311 @@
+\section{Deadlocks}
+\label{sec:deadlock}
+
+Deadlocks have come up twice already: the producer with its two \code{down()}s swapped, and the dining philosophers each holding a left chopstick (\Cref{sec:classic}). This section looks at them in general: when they can happen, and four ways of dealing with them. From now on the actors are called threads, but everything applies to processes as well.
+
+\subsection{Resource Allocation Graphs}
+
+The slides open with the restroom picture from \Cref{sec:classic}: one person holds a stall and waits for paper, the other holds the paper and waits for the stall. A graph makes the same picture precise.
+
+\begin{definition}[Resource Allocation Graph]
+  A \emph{resource allocation graph} has a node for each thread (a circle) and for each resource (a square). An edge from a resource to a thread means the thread is \emph{holding} the resource; an edge from a thread to a resource means the thread is \emph{requesting} it, i.e., blocked waiting for it.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[thr/.style={pill, fill=jobA, minimum width=20mm},
+                    res/.style={draw, fill=jobC, font=\scriptsize\ttfamily, minimum width=14mm, minimum height=5mm},
+                    hold/.style={arr, kernc},
+                    req/.style={arr, childc}]
+  \node[thr] (P) at (0,0) {Producer};
+  \node[thr] (C) at (5,0) {Consumer};
+  \node[res] (E) at (2.5,1.6) {empty};
+  \node[res] (M) at (2.5,-1.6) {mutex};
+  \draw[req] (P) to[out=70, in=180] node[above left, font=\scriptsize]{I'm waiting for it.} (E);
+  \draw[hold] (E) to[out=0, in=110] node[above right, font=\scriptsize]{I'm holding it.} (C);
+  \draw[req] (C) to[out=-110, in=0] node[below right, font=\scriptsize]{I'm waiting for it.} (M);
+  \draw[hold] (M) to[out=180, in=-70] node[below left, font=\scriptsize]{I'm holding it.} (P);
+  \begin{scope}[xshift=8.4cm, yshift=-1.3cm]
+    \fill[tsk!50] (-0.5,-0.35) rectangle (4.3,3.0);
+    \node[circle, draw, fill=jobA, minimum size=5mm] at (0.3,2.55) {};
+    \node[font=\scriptsize, anchor=west] at (1.6,2.55) {A thread.};
+    \node[draw, fill=jobC, minimum size=5mm] at (0.3,1.85) {};
+    \node[font=\scriptsize, anchor=west] at (1.6,1.85) {A resource.};
+    \node[circle, draw, fill=jobA, minimum size=5mm] (t1) at (0,1.1) {};
+    \node[draw, fill=jobC, minimum size=5mm] (r1) at (1.0,1.1) {};
+    \draw[hold] (r1) -- (t1);
+    \node[font=\scriptsize, anchor=west] at (1.6,1.1) {Holding a resource.};
+    \node[circle, draw, fill=jobA, minimum size=5mm] (t2) at (0,0.3) {};
+    \node[draw, fill=jobC, minimum size=5mm] (r2) at (1.0,0.3) {};
+    \draw[req] (t2) -- (r2);
+    \node[font=\scriptsize, anchor=west] at (1.6,0.3) {Requesting a resource.};
+  \end{scope}
+\end{tikzpicture}
+\caption{The producer-consumer deadlock of \Cref{fig:pcdeadlock} as a resource allocation graph: a cycle (after slide 269).}
+\label{fig:rag}
+\end{figure}
+
+This is a \emph{resource deadlock}: each thread holds a resource the other one needs, and the graph has a cycle.
+
+\begin{keypoint}[Conditions for Resource Deadlocks]
+  \label{kp:deadlockcond}
+  A resource deadlock can occur only if all four of the following conditions hold:
+  \begin{enumerate}
+    \item \emph{Mutual exclusion.} Each resource is either available or currently assigned to exactly one thread.
+    \item \emph{Hold and wait.} Threads currently holding resources that were granted earlier can request new resources.
+    \item \emph{No preemption.} Resources previously granted cannot be forcibly taken away from a thread; they must be explicitly released by the thread holding them.
+    \item \emph{Circular wait.} There is a cycle of two or more threads, each of which is waiting for a resource held by the next member of the cycle.
+  \end{enumerate}
+\end{keypoint}
+
+There are four strategies for dealing with deadlocks: ignore them, prevent them by breaking one of the four conditions, detect them and recover, or avoid them by careful resource allocation. The rest of the section takes them in that order.
+
+\subsection{The Ostrich Algorithm}
+
+The most widely adopted approach is to stick your head in the sand and pretend there is no problem. This is not a joke. If
+\begin{itemize}
+  \item the deadlock happens once in a blue moon,
+  \item detecting or preventing it is expensive,
+  \item you can resolve it by simply rebooting, and
+  \item the system crashes for other reasons much more frequently,
+\end{itemize}
+why not just let it be? Engineering is a trade-off between the cost of a fix and the cost of the failure.
+
+\subsection{Prevention: Attacking the Four Conditions}
+
+If any one of the four conditions of \Cref{kp:deadlockcond} can never hold, deadlocks become structurally impossible. Attack them one at a time.
+
+\subsubsection{Attack 1: no mutual exclusion}
+\begin{itemize}
+  \item \emph{Method 1: make the data read-only}, so that threads can use it concurrently without locks.
+  \item \emph{Method 2: lock-free data structures}, built from powerful atomic hardware instructions instead of locks.
+  \item \emph{Method 3: read-copy-update}, below.
+\end{itemize}
+For lock-free data structures, test-and-set (\Cref{sec:cs}) is not enough; the workhorse is \emph{compare-and-swap} (CAS). Conceptually it executes the following code atomically: it writes \code{new} only if the value is still the one the caller expected.
+\begin{lstlisting}
+bool compare_and_swap(int *ptr, int expected, int new) {
+  // this code executes atomically
+  if (*ptr != expected)
+    return false;
+  *ptr = new;
+  return true;
+}
+\end{lstlisting}
+
+\begin{example}[Atomic Increment]
+  To execute \code{*ptr += amount} atomically, read the old value and try to install the new one; if another thread changed \code{*ptr} in between, the CAS fails and we retry with the fresh value.
+\begin{lstlisting}
+void atomic_increment(int *ptr, int amount) {
+  int old;
+  do {
+    old = *ptr;
+  } while (!compare_and_swap(ptr, old, old + amount));
+}
+\end{lstlisting}
+  There is no lock, therefore no deadlock. Is there starvation? Yes, in principle: under heavy contention, a thread can lose the race every time, because some other thread's CAS keeps succeeding between its read and its own CAS. The system as a whole always makes progress (some CAS succeeds), but an individual thread may not. That is the guarantee called \emph{lock-free}, as opposed to the stronger \emph{wait-free}.
+\end{example}
+
+\begin{example}[Lock-Free Insertion into a Linked List]
+  Inserting a node at the head of a shared list:
+\begin{lstlisting}
+void insert(int value) {
+  node_t *n = malloc(sizeof(node_t));
+  assert(n != NULL);
+  n->value = value;
+  n->next = head;
+  head = n;
+}
+\end{lstlisting}
+  The race: two threads both read the same \code{head} into their \code{n->next}, then both write \code{head}. The second write wins, and the first thread's node is lost from the list. With CAS, the last two lines become ``set \code{head} to \code{n} only if \code{head} is still what I linked \code{n} to'', retried until it succeeds:
+\begin{lstlisting}
+void insert(int value) {
+  node_t *n = malloc(sizeof(node_t));
+  assert(n != NULL);
+  n->value = value;
+  do {
+    n->next = head;
+  } while (compare_and_swap(&head, n->next, n) == 0);
+}
+\end{lstlisting}
+  (Here \code{compare\_and\_swap} works on pointers rather than \code{int}s.) Before \code{head} changes, the new node is private to its thread, so preparing it needs no protection at all; only the single pointer update has to be atomic.
+\end{example}
+
+\begin{definition}[Read-Copy-Update]
+  \emph{Read-copy-update} (RCU) allows a writer to update a data structure while other threads are still reading it. Every update is arranged so that a reader sees and traverses either the old version or the new version, never some mash-up of the two. RCU decouples the \emph{removal} phase of an update, after which new readers can no longer reach the old data, from the \emph{reclamation} phase, in which the old data is freed once no reader can still be using it.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[n/.style={draw, minimum size=5mm, inner sep=0pt, font=\scriptsize},
+                    gone/.style={n, dashed},
+                    e/.style={-{Stealth[length=1.6mm]}},
+                    cp/.style={font=\scriptsize, align=left, anchor=north west, text width=40mm}]
+  % (a)
+  \begin{scope}
+    \node[n] (A) at (1,2.1) {A}; \node[n] (B) at (0.5,1.1) {B};
+    \node[n] (C) at (0,0) {C}; \node[n] (D) at (1,0) {D}; \node[n] (E) at (2,0) {E};
+    \draw[e] (A) -- (B); \draw[e] (A) -- (E); \draw[e] (B) -- (C); \draw[e] (B) -- (D);
+    \node[cp] at (-0.2,-0.4) {(a) Original tree.};
+  \end{scope}
+  % (b)
+  \begin{scope}[xshift=4.4cm]
+    \node[n] (A) at (1,2.1) {A}; \node[n] (B) at (0.5,1.1) {B};
+    \node[n] (C) at (0,0) {C}; \node[n] (D) at (1,0) {D}; \node[n] (E) at (2,0) {E};
+    \node[gone] (X) at (2.1,1.1) {X};
+    \draw[e] (A) -- (B); \draw[e] (A) -- (E); \draw[e] (B) -- (C); \draw[e] (B) -- (D);
+    \draw[e, dashed] (X) -- (E);
+    \node[cp] at (-0.2,-0.4) {(b) Initialize X and connect it to E. Readers in A and E are not affected.};
+  \end{scope}
+  % (c)
+  \begin{scope}[xshift=8.8cm]
+    \node[n] (A) at (1,2.1) {A}; \node[n] (B) at (0.5,1.1) {B};
+    \node[n] (C) at (0,0) {C}; \node[n] (D) at (1,0) {D}; \node[n] (E) at (2,0) {E};
+    \node[n] (X) at (2,1.1) {X};
+    \draw[e] (A) -- (B); \draw[e] (A) -- (X); \draw[e] (X) -- (E); \draw[e] (B) -- (C); \draw[e] (B) -- (D);
+    \node[cp] at (-0.2,-0.4) {(c) When X is completely initialized, connect X to A. Readers in E have read the old version; readers in A will pick up the new one.};
+  \end{scope}
+  % (d)
+  \begin{scope}[yshift=-4.6cm]
+    \node[n] (A) at (1,2.1) {A}; \node[n] (B) at (0.5,1.1) {B};
+    \node[n] (C) at (0,0) {C}; \node[n] (D) at (1,0) {D}; \node[n] (E) at (2,0) {E};
+    \node[n] (X) at (2,1.1) {X};
+    \draw[e] (A) to[out=200, in=90] (C); \draw[e] (A) -- (X); \draw[e] (X) -- (E);
+    \draw[e] (B) -- (C); \draw[e] (B) -- (D);
+    \node[cp] at (-0.2,-0.4) {(d) Decouple B from A. Readers still in B see the old version; readers in A see the new one.};
+  \end{scope}
+  % (e)
+  \begin{scope}[xshift=4.4cm, yshift=-4.6cm]
+    \node[n] (A) at (1,2.1) {A}; \node[gone] (B) at (0.5,1.1) {B};
+    \node[n] (C) at (0,0) {C}; \node[n] (D) at (1,0) {D}; \node[n] (E) at (2,0) {E};
+    \node[n] (X) at (2,1.1) {X};
+    \draw[e] (A) to[out=200, in=90] (C); \draw[e] (A) -- (X); \draw[e] (X) -- (E);
+    \draw[e, dashed] (B) -- (C); \draw[e, dashed] (B) -- (D);
+    \node[cp] at (-0.2,-0.4) {(e) Wait until all readers have left B and D. These nodes cannot be reached any more.};
+  \end{scope}
+  % (f)
+  \begin{scope}[xshift=8.8cm, yshift=-4.6cm]
+    \node[n] (A) at (1,2.1) {A};
+    \node[n] (C) at (0,0) {C}; \node[n] (E) at (2,0) {E};
+    \node[n] (X) at (2,1.1) {X};
+    \draw[e] (A) to[out=200, in=90] (C); \draw[e] (A) -- (X); \draw[e] (X) -- (E);
+    \node[cp] at (-0.2,-0.4) {(f) Now B and D can be safely freed.};
+  \end{scope}
+\end{tikzpicture}
+\caption{RCU: inserting a node X (a--c), then removing B (d--f) (after slides 276--277).}
+\label{fig:rcu}
+\end{figure}
+
+In \Cref{fig:rcu}, each step changes one pointer, and a single pointer store is atomic, so a reader walking down from A follows either the old pointer or the new one. Insertion builds the new node completely before publishing it with one store (b, c). Removal unpublishes B with one store (d); this is the removal phase. B and D cannot be freed yet, because a reader that was already in B is still allowed to finish its traversal. The writer waits for a \emph{grace period}, until every reader that might have seen B is done (e), and only then reclaims B and D (f). Readers take no locks at all.
+
+\subsubsection{Attack 2: no hold and wait}
+\begin{itemize}
+  \item \emph{Method 1: request all resources at once, before starting execution.} A thread that holds everything it needs never waits. But a thread may not know what resources it will need until it has started running, and resources are held for longer than needed, which decreases concurrency. Nevertheless, some mainframe batch systems use this approach.
+  \item \emph{Method 2: release all resources before requesting a new one.} A thread that holds nothing while it waits cannot be part of a cycle. \code{pthread\_cond\_wait()} (\Cref{sec:threads}) follows this idea: it releases the mutex before blocking.
+\end{itemize}
+
+\subsubsection{Attack 3: no ``no preemption''}
+Technically, we cannot forcibly take away a resource that a thread already holds. In practice, a thread can preempt its own ownership in a graceful way: instead of blocking on the second resource, it \emph{tries} to take it, and if that fails, it gives back the first. This is \emph{trylock} (\code{pthread\_mutex\_trylock()} in pthreads), and it is exactly Attempts 2 and 3 of the dining philosophers in \Cref{sec:classic}:
+\begin{itemize}
+  \item with a fixed backoff (\code{sleep(1)}), philosophers running in lockstep take, fail, put back, and sleep forever together: a \emph{livelock};
+  \item with a random backoff (\code{sleep(random())}), the lockstep breaks with high probability, which is good enough for most applications and is how many network protocols are designed.
+\end{itemize}
+
+\subsubsection{Attack 4: no circular wait}
+This is probably the most practical and frequently used approach. Give all the resources a total order (a global numbering), and let a thread request only resources numbered higher than any it is already holding.
+
+\begin{keypoint}[Resource Ordering Prevents Circular Wait]
+  Suppose threads $T_1, \dots, T_k$ formed a cycle, where $T_i$ holds resource $r_i$ and waits for $r_{i+1}$, which $T_{i+1}$ holds (indices mod $k$). Since $T_i$ requests $r_{i+1}$ while holding $r_i$, the ordering rule gives $r_i < r_{i+1}$ for every $i$. Going around the cycle, $r_1 < r_2 < \dots < r_k < r_1$, a contradiction.
+\end{keypoint}
+
+\begin{example}[Ordered Chopsticks]
+  Attempt 1 of the dining philosophers (\Cref{fig:philo1}) deadlocks because every philosopher takes chopstick $i$ and then $(i + 1) \bmod N$, and for philosopher $N - 1$ that second chopstick is $0$, lower than the first: the order wraps around and closes the cycle. Take the lower-numbered chopstick first instead:
+\begin{lstlisting}
+void philosopher(int i) {
+  int first = min(i, (i + 1) % N);
+  int second = max(i, (i + 1) % N);
+  for (;;) {
+    think();
+    take_chopstick(first);
+    take_chopstick(second);
+    eat();  // critical section
+    put_chopstick(second);
+    put_chopstick(first);
+  }
+}
+\end{lstlisting}
+  Only philosopher $N - 1$ changes: it now reaches for chopstick $0$ first, competing with philosopher $0$. If all of them get hungry at once, one of those two loses the race for chopstick $0$ and blocks holding nothing. That leaves a gap in the circle, so some philosopher can get both chopsticks and eat, and the rest follow as chopsticks are put down.
+\end{example}
+
+\subsection{Detection and Recovery}
+
+Another strategy is to allow deadlocks to occur (occasionally), try to detect when this happens, and then take some action to recover after the fact.
+
+\subsubsection{Detection with one resource of each type}
+A deadlock detector runs periodically and builds the resource allocation graph. When there is exactly one resource of each type, the threads are deadlocked if and only if the graph has a cycle, and the deadlocked threads are those on the cycle.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1.15cm, y=1.0cm,
+                    t/.style={circle, draw, minimum size=6mm, inner sep=0pt, font=\scriptsize},
+                    r/.style={draw, minimum size=5.5mm, inner sep=0pt, font=\scriptsize},
+                    e/.style={-{Stealth[length=1.6mm]}}]
+  \node[r] (R) at (0,3) {R}; \node[t] (A) at (1,3) {A}; \node[t] (B) at (3,3) {B};
+  \node[t] (C) at (0,2) {C}; \node[r] (S) at (1,2) {S}; \node[t] (D) at (2,2) {D};
+  \node[r] (T) at (3,2) {T}; \node[t] (E) at (4,2) {E};
+  \node[t] (F) at (1,1) {F}; \node[r] (U) at (2,1) {U}; \node[r] (V) at (4,1) {V};
+  \node[r] (W) at (1,0) {W}; \node[t] (G) at (2,0) {G};
+  \draw[e] (R) -- (A); \draw[e] (A) -- (S); \draw[e] (C) -- (S); \draw[e] (D) -- (S);
+  \draw[e] (F) -- (S); \draw[e] (W) -- (F); \draw[e] (B) -- (T); \draw[e] (D) -- (T);
+  \draw[e] (T) -- (E); \draw[e] (E) -- (V); \draw[e] (V) |- (G); \draw[e] (G) -- (U);
+  \draw[e] (U) -- (D);
+  \node[draw=sigc, dashed, thick, rounded corners=4pt, fit=(D) (E) (G) (V), inner sep=4pt] {};
+\end{tikzpicture}
+\caption{A resource allocation graph with one resource of each type. Threads D, E, and G are deadlocked on the cycle D $\to$ T $\to$ E $\to$ V $\to$ G $\to$ U $\to$ D (after slide 286).}
+\label{fig:detect}
+\end{figure}
+
+How to find a cycle in a directed graph? Depth-first search. Mark each node as unvisited, on the current path, or finished. Start a DFS from every unvisited node; when the search follows an edge into a node that is \emph{on the current path}, the path from that node back to itself is a cycle. When a node's edges are exhausted, mark it finished and backtrack; an edge into a finished node cannot close a cycle, since everything reachable from there has already been explored. Each node and edge is handled once, so the check is linear in the size of the graph. In \Cref{fig:detect}, a DFS from D goes D $\to$ T $\to$ E $\to$ V $\to$ G $\to$ U and then follows U $\to$ D back into the current path: deadlock among D, E, and G. A, C, and F are not deadlocked: nobody holds S, so one of them gets it, finishes, and releases it for the next. B is not on the cycle, but it waits for T, which the deadlocked E holds, so B will never proceed either.
+
+(With several resources of each type, e.g., three identical printers, a cycle is necessary for a deadlock but no longer sufficient, and detection needs a matrix-based algorithm instead.)
+
+\subsubsection{Recovery}
+None of the ways to recover is especially attractive.
+\begin{itemize}
+  \item \emph{Preemption.} Temporarily take a resource away from its owner and give it to another thread. Whether this is possible depends highly on the nature of the resource, and it often requires manual intervention; recovering this way is often difficult or impossible.
+  \item \emph{Rollback.} Checkpoint threads periodically by writing their states to a file, so that they can be restarted later. A thread that owns a needed resource is rolled back to a checkpoint from before it acquired that resource.
+  \item \emph{Killing.} Kill threads until the cycle is broken.
+\end{itemize}
+
+\subsection{Avoidance}
+
+Can the system avoid deadlocks by tightly controlling resource allocation, granting each request only when it is safe to do so? The \emph{banker's algorithm} (Dijkstra) does this: it grants a request only if, afterwards, there is still some order in which every thread can obtain its maximum demand and finish. It is very nice in theory, but essentially useless in practice, because it requires information about future requests (each thread's maximum demand), which is rarely available in advance.
+
+\subsection{Summary}
+
+\begin{keypoint}[Dealing with Deadlocks]
+  \begin{center}
+  \begin{tabular}{lp{0.62\textwidth}}
+    \toprule
+    Strategy & Idea \\
+    \midrule
+    Ostrich & ignore deadlocks when they are rare and cheap to fix by rebooting \\
+    Prevention & make one of the four conditions impossible: lock-free structures or RCU (mutual exclusion), all-at-once requests (hold and wait), trylock with backoff (no preemption), resource ordering (circular wait) \\
+    Detection and recovery & find cycles in the resource allocation graph; then preempt, roll back, or kill \\
+    Avoidance & grant only safe requests (banker's algorithm); needs future knowledge \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+\end{keypoint}
+
+\subsection{Process Management in Retrospect}
+
+This section ends the deck. Its questions, and where they were answered:
+\begin{itemize}
+  \item What is a process, and how is a program related to a process? (\Cref{sec:program})
+  \item How are processes created? (\Cref{sec:fork,sec:kernel,sec:internals})
+  \item How are processes organized? (\Cref{sec:signals,sec:org})
+  \item How are processes scheduled? (\Cref{sec:sched})
+  \item How do processes cooperate? (\Cref{sec:ipc})
+  \item What problems occur when processes cooperate? (\Cref{sec:cs,sec:classic,sec:deadlock})
+  \item What are threads, and how are they programmed? (\Cref{sec:threads})
+\end{itemize}

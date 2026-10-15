@@ -3,10 +3,10 @@
 
 Supplementary reading:
 \begin{itemize}
-  \item \cite{CSAPP} Chapter 7, Sections 8.1--8.5, 10.8, 10.9, 12.4, and 12.5.
-  \item \cite{OSTEP} Chapters 4--8, 28, 31, and 32.
-  \item \cite{MOS} Sections 2.1, 2.3--2.5, and 10.3.
-  \item \cite{OSC} Sections 2.9 and 3.3--3.7, and Chapters 5--7.
+  \item \cite{CSAPP} Chapter 7, Sections 8.1--8.5, 10.8, 10.9, 12.3--12.5, and 12.7.
+  \item \cite{OSTEP} Chapters 4--8, 26--28, and 30--32.
+  \item \cite{MOS} Sections 2.1--2.5 and 10.3, and Chapter 6.
+  \item \cite{OSC} Sections 2.9 and 3.3--3.7, and Chapters 4--8.
 \end{itemize}
 
 This chapter follows the slide deck \emph{2 --- Process Management}. It starts from the user's view of a process and works down into the kernel:
@@ -20,7 +20,9 @@ This chapter follows the slide deck \emph{2 --- Process Management}. It starts f
   \item \Cref{sec:sched}: process states, context switching, and scheduling algorithms from FCFS to MLFQ;
   \item \Cref{sec:ipc}: interprocess communication through pipes and shared memory, and race conditions;
   \item \Cref{sec:cs}: critical sections, and six attempts at mutual exclusion, ending with semaphores;
-  \item \Cref{sec:classic}: the producer-consumer, dining philosophers, readers and writers, and sleeping barber problems.
+  \item \Cref{sec:classic}: the producer-consumer, dining philosophers, readers and writers, and sleeping barber problems;
+  \item \Cref{sec:threads}: threads, thread models, POSIX threads, mutexes and condition variables, and thread safety;
+  \item \Cref{sec:deadlock}: the four conditions for deadlock, and how to ignore, prevent, detect, or avoid deadlocks.
 \end{itemize}
 
 \input{chapters/process/01-program-to-process}
@@ -33,3 +35,5 @@ This chapter follows the slide deck \emph{2 --- Process Management}. It starts f
 \input{chapters/process/08-ipc}
 \input{chapters/process/09-critical-sections}
 \input{chapters/process/10-classical-ipc}
+\input{chapters/process/11-threads}
+\input{chapters/process/12-deadlocks}

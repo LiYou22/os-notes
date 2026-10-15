@@ -18,12 +18,18 @@
 \RequirePackage{enumitem}
 \setlist[itemize]{label=\textbullet, itemsep=2pt, topsep=4pt}
 \setlist[enumerate]{itemsep=2pt, topsep=4pt}
+% Paragraphs are separated by space, not indentation
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt plus 1pt}
+% but keep the table of contents tight
+\AtBeginDocument{\let\origtoc\tableofcontents
+  \renewcommand{\tableofcontents}{\begingroup\setlength{\parskip}{0pt}\origtoc\endgroup}}
 \RequirePackage{graphicx}
 \RequirePackage{caption}
 \captionsetup{font=small}
 \RequirePackage{tikz}
 \usetikzlibrary{arrows.meta,calc,positioning,fit,backgrounds,
-  shapes.geometric,shapes.arrows,decorations.pathreplacing}
+  shapes.geometric,shapes.arrows,decorations.pathreplacing,decorations.pathmorphing}
 
 % Colors and boxes
 \RequirePackage[dvipsnames,table]{xcolor}

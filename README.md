@@ -2,7 +2,7 @@
 
 My LaTeX notes for CSCI-GA 2250-002 (Operating Systems) at NYU Courant, Fall 2026, taught by Dr. Yang Tang.
 
-I write one chapter per slide deck and split each chapter into sections by topic. So far there are two chapters: the introduction deck, and Process Management up to slide 245 (through the classical IPC problems). Figures captioned "after slide n" are my TikZ redraws of that slide.
+I write one chapter per slide deck and split each chapter into sections by topic. So far there are two chapters: the introduction deck, and the complete Process Management deck (through threads and deadlocks). Figures captioned "after slide n" are my TikZ redraws of that slide.
 
 ## Files
 
@@ -27,6 +27,8 @@ chapters/
     08-ipc.tex                 IPC, pipes, shared memory, race conditions
     09-critical-sections.tex   critical sections, from disabling interrupts to semaphores
     10-classical-ipc.tex       producer-consumer, dining philosophers, readers-writers, sleeping barber
+    11-threads.tex             threads, thread models, pthreads, condition variables, thread pools, thread safety
+    12-deadlocks.tex           deadlock conditions, ostrich, prevention (CAS, RCU, ordering), detection, avoidance
   appA-syscalls.tex            Appendix A: quick reference for the system calls
 ```
 

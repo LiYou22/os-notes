@@ -229,11 +229,13 @@ If \code{test\_and\_set} returns $0$, the lock was free and the caller has just 
 \end{definition}
 
 \begin{itemize}
-  \item \emph{Correct?} Yes, on a preemptive scheduler (on a nonpreemptive one, a process spinning on a single CPU would never let the holder run). Beware of priority inversion.
-  \item \emph{Good?} Simplicity: yes. Fairness: no guarantees; under contention a process may spin forever while others keep winning the lock, so it can starve. Performance:
+  \item \emph{Correct?} Yes, on a preemptive scheduler. On a nonpreemptive one, a process spinning on a single CPU would never let the holder run. Beware of priority inversion.
+  \item \emph{Good?}
   \begin{itemize}
-    \item single-processor system: bad. With $N$ processes contending for a lock, $(N-1)/N$ of the CPU time is wasted on spinning, since only the holder makes progress;
-    \item multiprocessor system: effective if the number of processes is about the number of CPUs and the critical section is short, because then the holder is running on another CPU and will release the lock soon.
+    \item \emph{Simplicity:} yes.
+    \item \emph{Fairness:} no guarantees. Under contention a process may spin forever while others keep winning the lock, so it can starve.
+    \item \emph{Performance on a single processor:} bad. With $N$ processes contending for a lock, $(N-1)/N$ of the CPU time is wasted on spinning, since only the holder makes progress.
+    \item \emph{Performance on a multiprocessor:} effective if the number of processes is about the number of CPUs and the critical section is short, because then the holder is running on another CPU and will release the lock soon.
   \end{itemize}
 \end{itemize}
 
