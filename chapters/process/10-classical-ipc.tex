@@ -164,13 +164,19 @@ If the buffer were \emph{unbounded}, the producer would never have to wait, so t
       \node[circle, draw, fill=jobA, minimum size=8mm, font=\scriptsize] (n\k) at (90+36*\k:2.2) {P\half};
     \fi
   }
-  \draw[arr, childc] (n0) to[bend left=20] (n9);
-  \draw[arr, kernc] (n0) to[bend right=20] (n1);
+  % philosopher i at node 2i: left chopstick C_i is the node before it, right chopstick C_{i+1} the node after
+  \foreach \i in {0,...,4} {
+    \pgfmathtruncatemacro{\p}{2*\i}
+    \pgfmathtruncatemacro{\l}{mod(2*\i+9,10)}
+    \pgfmathtruncatemacro{\r}{2*\i+1}
+    \draw[arr, childc] (n\p) to[bend left=20] (n\l);
+    \draw[arr, kernc] (n\p) to[bend right=20] (n\r);
+  }
   \node[font=\scriptsize, childc] at (1.9,2.4) {left};
   \node[font=\scriptsize, kernc] at (-1.9,2.4) {right};
   \node[anchor=west, align=left, font=\small] at (3.6,0) {For each philosopher $i$:\\[2pt]
-    \quad left chopstick $= i$\\
-    \quad right chopstick $= (i + 1) \bmod N$\\
+    \quad \textcolor{childc}{left chopstick} $= i$\\
+    \quad \textcolor{kernc}{right chopstick} $= (i + 1) \bmod N$\\
     \quad \code{LEFT} neighbor $= (i + N - 1) \bmod N$\\
     \quad \code{RIGHT} neighbor $= (i + 1) \bmod N$\\[4pt]
     States: \code{THINKING}, \\
