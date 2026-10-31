@@ -1,44 +1,10 @@
 # Operating Systems Notes
 
-My LaTeX notes for CSCI-GA 2250-002 (Operating Systems) at NYU Courant, Fall 2026, taught by Dr. Yang Tang.
+LaTeX notes for CSCI-GA 2250-002 (Operating Systems), NYU Courant, Fall 2026, Dr. Yang Tang. The compiled notes are in `os-notes.pdf`.
 
-I write one chapter per slide deck and split each chapter into sections by topic. So far there are two chapters: the introduction deck, and the complete Process Management deck (through threads and deadlocks). Figures captioned "after slide n" are my TikZ redraws of that slide.
+## Chapters
 
-## Files
+1. **Introduction**: what an OS is, interrupts and system calls, kernel and user mode, the basic abstractions (processes, files, address spaces, protection).
+2. **Process Management**: from program to process, `fork`/`exec`/`wait`, the kernel's view of a process and system call internals, signals, booting and the process tree, scheduling, IPC, critical sections and semaphores, classical IPC problems, threads, deadlocks.
 
-```
-main.tex          title page, notation, bibliography
-osnotes.sty       layout, the boxed environments, figure styles
-chapters/
-  ch1-introduction.tex         Chapter 1 (reading list and roadmap; sections are in intro/)
-  intro/
-    01-what-is-os.tex          what an OS is, what happens when you run ls
-    02-interacting.tex         interrupts, system calls vs. library calls, kernel and user mode, fopen()
-    03-abstractions.tex        processes, files, address spaces, protection
-  ch2-process-management.tex   Chapter 2 (sections are in process/)
-  process/
-    01-program-to-process.tex  compiling and linking, what a process is
-    02-fork-exec.tex           fork(), exec*(), system(), wait(), copy-on-write
-    03-kernel-view.tex         task_struct, file descriptors, dup2(), how a syscall is handled
-    04-syscall-internals.tex   fork/execve/exit/wait inside the kernel, zombies
-    05-signals.tex             signals and job control
-    06-organization.tex        booting, init, orphans, the process tree
-    07-scheduling.tex          process states, context switches, scheduling policies up to MLFQ
-    08-ipc.tex                 IPC, pipes, shared memory, race conditions
-    09-critical-sections.tex   critical sections, from disabling interrupts to semaphores
-    10-classical-ipc.tex       producer-consumer, dining philosophers, readers-writers, sleeping barber
-    11-threads.tex             threads, thread models, pthreads, condition variables, thread pools, thread safety
-    12-deadlocks.tex           deadlock conditions, ostrich, prevention (CAS, RCU, ordering), detection, avoidance
-  appA-syscalls.tex            Appendix A: quick reference for the system calls
-```
-
-## Building
-
-You need TeX Live with `latexmk`.
-
-```sh
-latexmk -pdf main.tex   # builds os-notes.pdf
-latexmk -c              # cleans up the aux files
-```
-
-When the course moves on, a new topic in an existing deck gets its own file (e.g. `chapters/process/11-threads.tex`, starting with `\section{...}`) and an `\input` line in the chapter file. A new deck gets a new `chapters/chN-topic.tex` with a `\chapter{...}`, a folder for its sections, and an `\include` in `main.tex`.
+Appendix: A. quick reference for the system calls.
