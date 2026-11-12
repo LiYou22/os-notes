@@ -1,0 +1,273 @@
+\section{Directories, Links, and Device Files}
+\label{sec:dirs}
+
+\subsection{What a Directory Is}
+
+\begin{definition}[Directory]
+  A \emph{directory} is also a file, with attributes and content of its own. Its content is an array of \emph{directory entries}; each entry holds the name of a stored file together with either the attributes of that file or the location of its attributes. Which of the two is FS dependent (\Cref{sec:fsmeta}).
+\end{definition}
+
+For example, the content of a home directory on macOS is a list of entries named \code{Applications}, \code{Documents}, \code{Downloads}, \dots, each paired with (the location of) the attributes of that subdirectory (\Cref{fig:dirent}).
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[nm/.style={draw, fill=tsk, minimum width=32mm, minimum height=6mm, font=\scriptsize\ttfamily},
+                    atc/.style={draw, fill=dirc!70, minimum width=14mm, minimum height=6mm}]
+  \node[draw, fill=kspace, minimum width=46mm, minimum height=6mm, font=\scriptsize\bfseries, anchor=south west] at (0,0) {Directory entry structure};
+  \foreach \n [count=\i] in {Applications,Documents,Downloads,\dots} {
+    \node[nm, anchor=north west] (n\i) at (0,-0.6*\i+0.6) {\n};
+    \node[atc, anchor=north west] (a\i) at (n\i.north east) {};
+  }
+  \node[callout, align=center, anchor=east] (cn) at (-1.0,-0.3) {name of the\\stored file};
+  \draw[thick] (cn.east) -- (n1.west);
+  \node[callout, align=center, anchor=west] (ca) at (5.6,-0.3) {attributes of the stored file,\\or the location of its attributes};
+  \draw[thick] (ca.west) -- (a1.center);
+  \node[font=\scriptsize\itshape, cmt, anchor=north] at (2.3,-2.55) {content of the directory file of \code{\textasciitilde}};
+\end{tikzpicture}
+\caption{A directory file is an array of directory entries; each maps a name to the attributes of the named file, or to where those attributes are stored (after slide 33).}
+\label{fig:dirent}
+\end{figure}
+
+Because a directory is a file, everything said about files in \Cref{sec:files} applies to it. It has a pathname, it has attributes (\code{ls -ld dir} prints the attributes of \code{dir} itself rather than its entries, and the leading \code{d} in the permission string is the file type), and it has content, which is the array of entries. What it does \emph{not} contain is the content of the files it lists: an entry only leads to the attributes of a file, and the attributes in turn lead to the content.
+
+Which of the two options a directory entry uses splits the file systems of \Cref{tab:attrs}:
+\begin{itemize}
+  \item in FAT32, the attributes themselves are stored inside the directory entry (\Cref{sec:fat});
+  \item in ext2/3/4, the entry holds only the name and an \emph{inode number}, the location of the attributes (\Cref{sec:ext}).
+\end{itemize}
+
+\begin{keypoint}[A File's Name Lives in Its Parent]
+  \label{kp:nameinparent}
+  The name of a file is not one of its attributes; it is stored in a directory entry of the parent directory. Creating, deleting, or renaming a file therefore changes the content of the parent's directory file, and with the second option two entries can lead to the same attributes, which is what a hard link is.
+\end{keypoint}
+
+Since an entry may name another directory, directories nest into the familiar tree, with the root directory \code{/} at the top. In Unix every directory also contains two special entries: \code{.} for itself and \code{..} for its parent.
+
+\subsection{Locating a File by Its Pathname}
+\label{sec:lookup}
+
+Since a directory maps names to attributes, a pathname is resolved one component at a time, starting at the root (\Cref{fig:lookup}). To open \code{/bin/ls}:
+\begin{enumerate}
+  \item The process sends the pathname \code{/bin/ls} to the OS.
+  \item The OS retrieves the directory file of the root directory \code{/}.
+  \item The disk returns that directory file.
+  \item The OS looks for the name \code{bin} in it.
+  \item If found, the OS uses the attributes of \code{bin} to retrieve the directory file of \code{/bin}.
+  \item The OS looks for the name \code{ls} in the directory file of \code{/bin}.
+  \item If found, the OS knows that \code{/bin/ls} exists, and it starts the procedure of \Cref{fig:open} to open it.
+\end{enumerate}
+(How the OS knows where the root directory is comes in \Cref{sec:fsmeta}.)
+
+A few consequences follow from this procedure.
+\begin{itemize}
+  \item \emph{Every component costs a lookup.} Each directory on the path must be read and searched before the next one can be found. Opening \code{/usr/share/file/magic} reads four directory files, \code{/}, \code{/usr}, \code{/usr/share}, and \code{/usr/share/file}, before the attributes of \code{magic} are reached. If each read went to the disk, deep pathnames would be slow; in practice the kernel caches recently used directory entries (\Cref{sec:fsperf}).
+  \item \emph{Relative pathnames start elsewhere.} A pathname without a leading \code{/}, such as \code{src/main.c}, is resolved the same way, but starting from the \emph{current working directory} of the process instead of the root. The kernel keeps the working directory for each process; \code{cd} in a shell calls \code{chdir()} to change it. The entries \code{..} and \code{.} are looked up like any other name, so \code{../a} simply goes through the parent.
+  \item \emph{Lookup can fail at any step.} If a name is not found, \code{open()} fails with \code{ENOENT}; if a component in the middle names a regular file rather than a directory (\code{/bin/ls/x}), it fails with \code{ENOTDIR}. Each directory on the way is also a permission check: searching a directory requires its execute (\code{x}) permission.
+\end{itemize}
+
+\begin{keypoint}[A Pathname Is a Chain of Directory Lookups]
+  To reach a file, the OS walks the path one component at a time: read a directory file, find the next name, follow the entry to the attributes of that name, and repeat. Only the last step lands on the attributes of the target file, after which the file is opened as in \Cref{fig:open}.
+\end{keypoint}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[ent/.style={draw, fill=rowc, minimum width=14mm, minimum height=5mm, font=\scriptsize\ttfamily},
+                    ptr/.style={draw, fill=dirc, minimum width=4mm, minimum height=5mm}]
+  \foreach \c [count=\i] in {/,b,i,n,/,l,s} \node[draw, fill=jobA, minimum size=5mm, font=\scriptsize\ttfamily] at (0.5*\i,0) {\c};
+  \node[font=\scriptsize\itshape, anchor=east] at (0.2,0) {pathname};
+  \begin{scope}[yshift=-1.4cm]
+    \node[font=\scriptsize\bfseries] at (1.0,0) {File: /};
+    \foreach \n [count=\i] in {bin,usr,\dots} {
+      \node[ent] (r\i) at (0.8,-0.5*\i) {\n};
+      \node[ptr, right=0pt of r\i] (rp\i) {};
+    }
+  \end{scope}
+  \begin{scope}[xshift=4.2cm, yshift=-1.4cm]
+    \node[font=\scriptsize\bfseries] at (1.0,0) {File: /bin};
+    \foreach \n [count=\i] in {cat,ls,\dots} {
+      \node[ent] (b\i) at (0.8,-0.5*\i) {\n};
+      \node[ptr, right=0pt of b\i] (bp\i) {};
+    }
+  \end{scope}
+  \node[box, fill=usedc, font=\scriptsize, align=center] (ls) at (9.0,-2.4) {attributes\\ of \code{/bin/ls}};
+  \draw[arr, sigc] (rp1.east) to[out=0, in=180] node[above, font=\scriptsize, black] {step 5} (b1.west);
+  \draw[arr, sigc] (bp2.east) -- node[above, font=\scriptsize, black] {step 7} (ls.west |- bp2);
+  \draw[densely dashed, cmt] (0.5,-0.25) -- (r1.north);
+  \draw[densely dashed, cmt] (2.5,-0.25) -- (b1.north);
+  \draw[densely dashed, cmt] (3.25,-0.25) to[out=-30, in=90] (b2.north east);
+\end{tikzpicture}
+\caption{Resolving \code{/bin/ls}: look up \code{bin} in the root directory file, follow it to the directory file of \code{/bin}, and look up \code{ls} there (after slides 34--36).}
+\label{fig:lookup}
+\end{figure}
+
+\clearpage
+\subsection{Reading a Directory}
+
+Reading a directory follows the same open--read--close pattern as reading a file, through library functions:
+\begin{lstlisting}
+int main(int argc, char **argv) {
+    DIR *dir;
+    struct dirent *entry;
+
+    dir = opendir("/");                         // open a directory
+
+    while ((entry = readdir(dir)) != NULL) {    // read one entry at a time
+        printf("%s\n", entry->d_name);          // until there are no more
+    }
+
+    closedir(dir);                              // close it
+}
+\end{lstlisting}
+Combined with \code{stat()} on each entry, this is a complete \code{/bin/ls}: all \code{ls} does is locate the directory file of the target directory and print its contents.
+
+\begin{keypoint}[Directory Traversal]
+  A directory file records all the files and directories that belong to it. A traversal of the directory tree, as in \Cref{fig:lookup}, takes place whenever you open a file, execute a program, or list the content of a directory.
+\end{keypoint}
+
+\subsection{Links}
+
+\begin{definition}[Link]
+  A \emph{link} is an alias of a file. Windows has the \emph{shortcut}; Unix, Linux, and macOS have the \emph{hard link} and the \emph{symbolic link}.
+\end{definition}
+
+A link gives an existing file another name, so the file can be reached from several places without being copied. Unix has two kinds, and they differ in what the extra name refers to: a symbolic link refers to a \emph{pathname}, a hard link refers to the \emph{file itself} (\Cref{fig:links}).
+
+\subsubsection{Symbolic links}
+A symbolic link is a small file of its own whose content is a pathname, called the \emph{target}. A Windows shortcut is the same idea. Create one with \code{ln -s}:
+\begin{lstlisting}[style=sh]
+$ ln -s notes.txt mylink
+$ ls -l mylink
+lrwxrwxrwx. 1 yt2475 yt2475grp 9 Nov 12 17:00 mylink -> notes.txt
+$ cat mylink
+hello
+\end{lstlisting}
+\code{ls -l} marks the link with the file type \code{l} and shows the stored pathname after \code{->}; the size, 9, is the length of that pathname. When a pathname lookup (\Cref{sec:lookup}) reaches a symbolic link, the kernel substitutes the stored pathname and continues, which is why \code{cat mylink} prints the content of \code{notes.txt}.
+
+Since the link stores only a pathname, it can point to anything that has one, including a directory or a file on another file system. The price is that it does not follow its target: if \code{notes.txt} is deleted, renamed, or moved, the link is left \emph{dangling}, and \code{cat mylink} reports \code{No such file or directory}.
+
+\subsubsection{Hard links}
+A hard link creates no new file. It adds another directory entry that leads to the same attributes as an existing one, which is possible because a file's name is stored in its parent directory, not in the file (\Cref{kp:nameinparent}). Create one with \code{ln}:
+\begin{lstlisting}[style=sh]
+$ ln notes.txt same.txt
+$ ls -li notes.txt same.txt
+5086 -rw-r--r--. 2 yt2475 yt2475grp 6 Nov 12 17:00 notes.txt
+5086 -rw-r--r--. 2 yt2475 yt2475grp 6 Nov 12 17:00 same.txt
+\end{lstlisting}
+Both names show the same inode number (first column), so they are the same file, and its \emph{link count} (third column) is now 2. Neither name is the original. \code{rm notes.txt} removes one entry and decrements the link count; the file is deleted only when the count reaches 0 (\Cref{sec:ext}). Because an inode number has meaning only within one file system, a hard link cannot cross file systems, and to keep the directory tree free of cycles, it cannot point to a directory.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[nm/.style={draw, fill=tsk, minimum width=20mm, minimum height=6mm, font=\scriptsize\ttfamily},
+                    atc/.style={draw, fill=dirc!70, minimum width=8mm, minimum height=6mm},
+                    obj/.style={draw, rounded corners=2pt, align=center, font=\scriptsize, minimum height=10mm, inner sep=3pt}]
+  \node[draw, fill=kspace, minimum width=28mm, minimum height=6mm, font=\scriptsize\bfseries, anchor=south west] at (0,0) {Directory};
+  \foreach \n [count=\i] in {notes.txt,same.txt,mylink} {
+    \node[nm, anchor=north west] (n\i) at (0,-0.6*\i+0.6) {\n};
+    \node[atc, anchor=north west] (a\i) at (n\i.north east) {};
+  }
+  \node[obj, fill=usedc] (f) at (6.2,-0.3) {attributes (inode 5086)\\ link count $=2$};
+  \node[obj, fill=freec!60, right=6mm of f] (fc) {content\\ \code{hello}};
+  \node[obj, fill=usedc] (l) at (6.2,-2.2) {attributes (inode 6120)\\ type $=$ symlink};
+  \node[obj, fill=freec!60, right=6mm of l] (lc) {content\\ \code{notes.txt}};
+  \draw[arr] (a1.center) -- (f.west);
+  \draw[arr] (a2.center) -- (f.west);
+  \draw[arr] (a3.center) -- (l.west);
+  \draw[arr] (f) -- (fc);
+  \draw[arr] (l) -- (lc);
+  \draw[arr, sigc, densely dashed] (lc.south) -- ++(0,-0.5) -| node[pos=0.25, below, font=\scriptsize] {followed by name: look up \code{notes.txt} in the directory again} ([xshift=-5mm]n1.west) -- (n1.west);
+  \node[font=\scriptsize\itshape, sigc, anchor=west] at (3.0,0.35) {hard link: two entries, one file};
+  \node[font=\scriptsize\itshape, sigc, anchor=west] at (3.0,-1.55) {symbolic link: a separate file};
+\end{tikzpicture}
+\caption{\code{same.txt} is a hard link to \code{notes.txt}: two directory entries lead to the same attributes. \code{mylink} is a symbolic link: an entry leading to a file of its own, whose content is the pathname \code{notes.txt}.}
+\label{fig:links}
+\end{figure}
+
+\subsubsection{Moving a file}
+The same idea explains \code{mv}. Moving a file does not move its content; it only changes which directory entry leads to it. Within one file system, \code{mv notes.txt docs/n.txt} calls \code{rename()}, which adds the entry \code{n.txt} to \code{docs}, leading to the same attributes, and removes the entry \code{notes.txt}: like \code{ln} followed by \code{rm}, but in one atomic step.
+\begin{lstlisting}[style=sh]
+$ ls -i notes.txt
+5086 notes.txt
+$ mv notes.txt docs/n.txt
+$ ls -i docs/n.txt
+5086 docs/n.txt
+\end{lstlisting}
+The inode number is unchanged: it is the same file under a new name. Only two directory files are written, so moving a 10\,GB file is as fast as moving an empty one. Moving a directory is just as cheap, since its entire subtree hangs off that single entry.
+
+Across file systems this is impossible, for the same reason a hard link cannot cross them: \code{mv} must copy the content into a new file (new inode) and delete the original, which takes time proportional to the file size. After either kind of move, \code{same.txt} still works, but \code{mylink} is dangling.
+
+\clearpage
+\subsection{Device Files}
+
+In Unix and Linux, most devices are represented as files: \code{/dev/hda} is the first IDE hard disk drive, \code{/dev/sda} the first SATA or SCSI drive, and \code{/dev/fd0} the first floppy drive.
+\begin{lstlisting}[style=sh]
+$ ls -l /dev/sda
+brw-rw----. 1 root disk 8, 0 Aug 26 19:28 /dev/sda
+\end{lstlisting}
+Two things in this listing set a device file apart from a regular file. First, its type is \code{b}, for \emph{block device}. Second, where a regular file would show its size, it shows two numbers, \code{8, 0}. A device file has no content of its own; these numbers tell the kernel which device it stands for. The \emph{major number} identifies the driver (8 is the driver for SCSI and SATA disks), and the \emph{minor number} identifies one device among those the driver handles (0 is the first disk). Reading or writing the file therefore goes to the driver, and from there to the hardware.
+
+This makes the raw disk as easy to write as any file, which is dangerous: \code{cat anyfile > /dev/sda} overwrites the file system on the disk, and with it every file stored there. Don't try this.
+
+Linux also creates some \emph{pseudo-devices} for convenience:
+\begin{itemize}
+  \item \code{/dev/zero} outputs an endless sequence of zero bytes;
+  \item \code{/dev/urandom} outputs an endless sequence of random bytes (so \code{cat /dev/urandom > output} fills your disk);
+  \item \code{/dev/null}, the black hole, discards whatever is written to it. After \code{cat file.txt > /dev/null}, \code{cat /dev/null} prints nothing.
+\end{itemize}
+
+\subsection{Creating and Deleting Files}
+
+What does it mean to create a file named \code{file.txt}? \code{touch file.txt}, \code{vim file.txt} (followed by a struggle to exit the editor), and \code{cp final\_exam\_solution.txt file.txt} all do it. The reality behind all three is the same.
+
+\begin{keypoint}[File Creation Updates the Directory]
+  Creating a file is an update of its directory file: a new directory entry is added. \code{touch file.txt} \emph{only} creates the entry; no space is allocated for content. Removing a file is the reverse: its entry is removed from the directory file.
+\end{keypoint}
+
+The update is visible in the attributes of the directory itself:
+\begin{lstlisting}[style=sh]
+$ ls -ld .
+drwx------. 2 yt2475 yt2475grp 2 Oct  7 07:35 .
+$ touch file.txt
+$ ls -ld .
+drwx------. 2 yt2475 yt2475grp 3 Nov  1 19:10 .
+$ rm file.txt
+rm: remove regular empty file 'file.txt'? y
+$ ls -ld .
+drwx------. 2 yt2475 yt2475grp 2 Nov  1 21:00 .
+\end{lstlisting}
+Both the size and the modification time of \code{.} change. What happens to the content of a deleted file is a question for \Cref{sec:fat,sec:ext}.
+
+\subsection{File-Related System Calls}
+
+\begin{center}
+\small
+\begin{tabular}{>{\ttfamily}l p{0.75\textwidth}}
+  \toprule
+  \normalfont System call & Description \\
+  \midrule
+  open & open a file and create a set of dynamic attributes inside the kernel; may create a new file, which updates the directory entries \\
+  close & flush all outstanding data to the storage medium; clear the dynamic attributes and update the static ones \\
+  read & read data from the open file; the file pointer advances after a successful read \\
+  write & write data to the open file; the file pointer advances after a successful write \\
+  lseek & change the position of the file pointer \\
+  link & create a hard link \\
+  symlink & create a symbolic link \\
+  stat & read the attributes of a file \\
+  rename & change the pathname of a file \\
+  unlink & remove an existing file \\
+  \midrule
+  mkdir & create a new, empty directory \\
+  rmdir & remove an empty directory \\
+  open, close & also open and close a directory; library functions \code{opendir()} and \code{closedir()} \\
+  getdents & read directory entries; library function \code{readdir()} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Summary}
+
+So far we have looked at what is common to all file systems: files and directories. Many other things are FS dependent or OS dependent:
+\begin{itemize}
+  \item a shortcut in Windows is just an ordinary file;
+  \item a link file in Unix and Linux is a special type of file;
+  \item a device file in Unix and Linux does not exist on the file system at all: it is an illusion created by the OS.
+\end{itemize}

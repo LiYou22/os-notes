@@ -1,0 +1,281 @@
+\section{Allocating Space for Files}
+\label{sec:alloc}
+
+\subsection{What a File System Is About}
+
+A file system is about how the OS stores and locates files and directories. It is also about managing the storage \emph{efficiently} (speed and storage utilization) and \emph{reliably} (can we always get back what has been saved?).
+
+\begin{definition}[File System Structure]
+  A file system can be viewed in four levels.
+  \begin{itemize}
+    \item \emph{Application level} (user): what entities and services does the FS provide to applications?
+    \item \emph{Logical representation level}: how does the FS represent the entities logically?
+    \item \emph{File organization level}: how does the FS organize the entities on the storage device?
+    \item \emph{Device control level}: how does the FS control the device to read and write them?
+  \end{itemize}
+  The last three are in the kernel.
+\end{definition}
+
+The logical representation goes partially to the users and mostly to the kernel: users must know what entities and services the FS provides, but not how they are implemented. That is FS specific, and \Cref{sec:vfs} looks at it through Linux. This section and the next are about the file organization level.
+
+\subsection{The Design Problem}
+
+Suppose you are the FS controller and you are given an empty 100\,GB hard disk. You can use it however you like. Your goal is to store files on it (forget about directories for now), and to read and write them efficiently and reliably. How would you organize the data? The slides answer with a sequence of attempts, each fixing the main problem of the previous one.
+
+\subsection{Attempt 1: Write Files One After Another}
+
+Scan from byte 0; at the next empty space, start writing the new file there. This is not cool at all.
+\begin{itemize}
+  \item Retrieving data is extremely slow: to find a file, the FS must scan the disk from the beginning.
+  \item Deleting a file leaves a \emph{hole}, and since nothing records where files end, writing a new file into the hole may overwrite the file that follows it.
+\end{itemize}
+
+\subsection{Attempt 2: Contiguous Allocation with a File System Table}
+
+Keep a table, the \emph{file system table}, that records the starting and ending addresses of all files (\Cref{fig:contig}). Now the FS can quickly search for any file and quickly find the next empty space (in \Cref{fig:contig}, a sequential search of the table finds that 2001 is free). The table also shows the holes, so the overwriting problem is gone.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm]
+  \node[blk, fill=metac, minimum width=12mm, align=center, font=\tiny] at (0.6,0) {FS table};
+  \draw[fill=usedc] (1.2,-0.35) rectangle (4.0,0.35); \node[font=\scriptsize] at (2.6,0) {rock.mp3};
+  \draw[fill=freec] (4.0,-0.35) rectangle (6.2,0.35); \node[font=\scriptsize] at (5.1,0) {hole};
+  \draw[fill=dirc!70] (6.2,-0.35) rectangle (7.6,0.35); \node[font=\scriptsize] at (6.9,0) {game.exe};
+  \draw[fill=freec] (7.6,-0.35) rectangle (12,0.35);
+  \node[font=\scriptsize, anchor=north] at (1.2,-0.35) {0};
+  \node[font=\scriptsize, anchor=north] at (12,-0.35) {100\,GB};
+  \begin{scope}[yshift=1.6cm]
+    \node[hcell, minimum width=16mm] (h1) at (2,0) {Filename};
+    \node[hcell, minimum width=14mm, right=0pt of h1] (h2) {Start};
+    \node[hcell, minimum width=14mm, right=0pt of h2] (h3) {End};
+    \foreach \f/\s/\e [count=\i] in {rock.mp3/0/2000, game.exe/5000/5678} {
+      \node[cell, minimum width=16mm, font=\scriptsize\ttfamily] (a\i) at (2,-0.5*\i) {\f};
+      \node[cell, minimum width=14mm, right=0pt of a\i] (b\i) {\s};
+      \node[cell, minimum width=14mm, right=0pt of b\i] (c\i) {\e};
+    }
+  \end{scope}
+  \node[callout, anchor=west] at (7.2,1.2) {A hole is detected\\ from 2001 to 4999.};
+  \node[callout, anchor=north, fill=jobA!40] at (9.8,-0.6) {a new large file\\ fits in no hole};
+\end{tikzpicture}
+\caption{Contiguous allocation: the file system table records where each file starts and ends, which exposes the holes, but a large file may still fit in no single hole (after slides 59--62).}
+\label{fig:contig}
+\end{figure}
+
+Better, but not good enough: free space is not used wisely.
+
+\begin{definition}[External Fragmentation]
+  \emph{External fragmentation} is the situation in which the allocated space is fragmented into chunks with many holes in between, so that a large file may find no suitable hole even though the total free space is enough.
+\end{definition}
+
+\begin{definition}[Defragmentation]
+  \emph{Defragmentation} packs the files sequentially again: the allocated space moves to the front of the disk, the free space to the end, and the file system table is rewritten.
+\end{definition}
+
+Defragmentation is very expensive: it may involve every file on the disk, so it is very slow, and the disk is unavailable while it runs. And there is one more issue: if a file wants to grow but there is no empty space adjacent to it, the solution (moving the file, or its neighbors) is again very expensive.
+
+This scheme is called \emph{contiguous allocation}. It is the best choice when no file will ever be deleted and all file sizes are fixed. A real-life example: CD-ROMs, whose ISO~9660 and Joliet file systems are written once.
+
+\subsection{Attempt 3: Blocks}
+
+To improve on contiguous allocation:
+\begin{enumerate}
+  \item break all allocated and empty space into small, equal-sized \emph{blocks};
+  \item break the new file into blocks too;
+  \item fill the new file into the empty space block by block.
+\end{enumerate}
+Now the new file fits into the available empty space no matter how it is scattered. The price is that each file may have multiple starting and ending addresses. How should the file system table record them?
+
+\subsubsection{Attempt 3.1: a linked list of blocks}
+Organize each file as a linked list of data blocks: the file system table records each file's starting block, and every block stores the number of the next block (or NULL at the end). Free space is organized as a linked list too, whose start is also recorded in the table.
+
+\emph{Pros.} It is easy to implement, since a pointer is just the ID or address of the next block. The file system table is smaller than with contiguous allocation (one number per file). There is no external fragmentation, files can grow and shrink, and free space is well organized.
+
+\emph{Cons.} The first is the \emph{random access problem}: accessing a specific block is expensive. In the worst case, reading the last block of a file means traversing from its first block, on the disk, all the way to the last, a large number of disk accesses. The second is new.
+
+\begin{definition}[Internal Fragmentation]
+  A file is not always a multiple of the block size, so the last block of a file may not be completely filled. The remaining space is wasted, because no other file is allowed to use it. This is \emph{internal fragmentation}.
+\end{definition}
+
+\begin{remark}[Choosing the Block Size]
+  If the block size is small, the total number of blocks is large: each file contains more blocks, so the number of disk accesses increases, and the list representation itself takes more space, leaving less for real content. In return, internal fragmentation is alleviated (less space is wasted per file). A large block size reverses each of these.
+\end{remark}
+
+To solve the random access problem, the information about the next block should be \emph{centralized} instead of being spread over the data blocks.
+
+\subsubsection{Attempt 3.2: the file allocation table}
+Store the linked lists as one table (\Cref{fig:fat}).
+
+\begin{definition}[File Allocation Table]
+  A \emph{file allocation table} (FAT) is an array with one entry per block of the device, stored contiguously. The entry of block $b$ holds the number of the block that follows $b$ in its file, or a special value marking the end of the file ($-1$ in \Cref{fig:fat}) or a free block ($0$). The file system table maps each filename to the file's starting block.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[hcell, minimum width=17mm] (fh) at (0,0) {Filename};
+  \node[hcell, minimum width=17mm, below=0pt of fh] (sh) {Start block};
+  \foreach \f/\s [count=\i] in {rock.mp3/0, sweet.jpg/123, new.exe/80, Empty/199} {
+    \node[cell, minimum width=15mm, font=\scriptsize\ttfamily] at ($(fh.east)+(0.75+1.5*\i-1.5,0)$) {\f};
+    \node[cell, minimum width=15mm] at ($(sh.east)+(0.75+1.5*\i-1.5,0)$) {\s};
+  }
+  \begin{scope}[yshift=-1.9cm, xshift=-1.2cm]
+    \node[hcell, minimum width=17mm] (bh) at (0,0) {Block \#};
+    \node[hcell, minimum width=17mm, below=0pt of bh] (nh) {Next block};
+    \foreach \b/\n/\c [count=\i] in {0/1/usedc, \dots/\dots/usedc, 79/$-1$/usedc, 80/81/dirc, \dots/\dots/dirc, 122/197/dirc,
+                                     123/124/jobB, \dots/\dots/jobB, 197/198/dirc, 198/$-1$/dirc, 199/0/freec} {
+      \node[cell, minimum width=9mm, fill=\c!70] at ($(bh.east)+(0.45+0.9*\i-0.9,0)$) {\b};
+      \node[cell, minimum width=9mm, fill=\c!35] at ($(nh.east)+(0.45+0.9*\i-0.9,0)$) {\n};
+    }
+  \end{scope}
+  \node[font=\scriptsize, color=sigc, align=center, anchor=north] at (3.6,-2.9) {\code{new.exe}: 80 $\to$ 81 $\to\cdots\to$ 122\\ $\to$ 197 $\to$ 198 $\to$ end};
+\end{tikzpicture}
+\caption{The file allocation table: one ``next block'' entry per block, $-1$ marking the end of a file and $0$ a free block. The chain of \code{new.exe} jumps from 122 to the faraway block 197 (after slide 76).}
+\label{fig:fat}
+\end{figure}
+
+The size of the FAT depends on the size of the device and the block size. A 100\,GB disk with 1\,KB blocks has about 100 million blocks, hence 100 million FAT entries; at 4 bytes per entry, the FAT needs 400\,MB.
+
+\emph{Pros.} The file system table and the FAT can be cached in kernel memory for fast lookup. Following a chain then happens in memory, so the random access problem is gone. \emph{Cons.} The FAT takes a lot of space.
+
+This is the design of FAT12, FAT16, and FAT32; NTFS does something similar but more complex. In FAT, a block is called a \emph{cluster}, and the versions differ in the length of a cluster number:
+\begin{center}
+\small
+\begin{tabular}{lccc}
+  \toprule
+  & FAT12 & FAT16 & FAT32 \\
+  \midrule
+  Cluster number length & 12 bits & 16 bits & 28 bits (!) \\
+  Number of clusters & $2^{12}$ & $2^{16}$ & $2^{28}$ \\
+  \bottomrule
+\end{tabular}
+\end{center}
+(Yes, FAT32 uses only 28 of its 32 bits. Ask Uncle Bill why.)
+
+\begin{keypoint}[Maximum File Size under FAT]
+  If a cluster number has $L$ bits and a cluster has $S$ bytes, a file can have at most $2^L$ clusters, so the maximum file size is $2^L \times S$. In FAT16 with 16\,KB clusters, that is $2^{16} \times 16\,\text{KB} = 1\,\text{GB}$.
+  \begin{center}
+  \begin{tabular}{lccc}
+    \toprule
+    Cluster size & FAT12 & FAT16 & FAT32 \\
+    \midrule
+    16\,KB & not supported & 1\,GB & 4\,GB \\
+    32\,KB & not supported & 2\,GB & 4\,GB \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+  For FAT32, $2^{28} \times S$ is far larger than 4\,GB; the limit comes instead from the 4-byte file-size field in the directory entry (\Cref{sec:fat}).
+\end{keypoint}
+
+Can we do better? To know where the allocated blocks are, the FS has to load the \emph{entire} FAT into memory, and the FAT itself may span thousands of blocks. Perhaps we do not need all of it at once: can the table be broken into smaller pieces, so that the FS reads only a few blocks to find all the blocks of one file?
+
+\subsection{Attempt 4: Index Nodes}
+
+Divide the FAT by file: give each file its own small table of block addresses (\Cref{fig:inodes}).
+
+\begin{definition}[Index Node]
+  An \emph{index node} (\emph{inode}) stores the addresses of all the data blocks of one file. All inodes are kept in the \emph{inode table}, and the file system table maps each filename to an inode number. The size of the inode table determines the number of files the FS can store.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[hcell, minimum width=14mm] (fh) at (0,0) {Filename};
+  \node[hcell, minimum width=14mm, below=0pt of fh] (ih) {Inode \#};
+  \foreach \f/\s [count=\i] in {rock.mp3/0, sweet.jpg/1, new.exe/2, Empty/199} {
+    \node[cell, minimum width=15mm, font=\scriptsize\ttfamily] (f\i) at ($(fh.east)+(0.75+1.5*\i-1.5,0)$) {\f};
+    \node[cell, minimum width=15mm] (i\i) at ($(ih.east)+(0.75+1.5*\i-1.5,0)$) {\s};
+  }
+  \foreach \n/\a/\b/\c/\x in {0/0/79/usedc/-0.6, 1/80/197/dirc!70/3.0, 2/123/196/jobB/6.6} {
+    \begin{scope}[xshift=\x cm, yshift=-1.6cm]
+      \node[cell, fill=\c, minimum width=30mm, font=\scriptsize\bfseries] (n\n) at (0,0) {Index node \#\n};
+      \node[cell, fill=bootc!40, minimum width=15mm] (l\n1) at (-0.75,-0.5) {Block 1};
+      \node[cell, minimum width=15mm] at (0.75,-0.5) {\a};
+      \node[cell, fill=bootc!40, minimum width=15mm] at (-0.75,-1.0) {\dots};
+      \node[cell, minimum width=15mm] at (0.75,-1.0) {\dots};
+      \node[cell, fill=bootc!40, minimum width=15mm] at (-0.75,-1.5) {Block $n$};
+      \node[cell, minimum width=15mm] at (0.75,-1.5) {\b};
+    \end{scope}
+  }
+  \draw[arr] (i1.south) -- (n0.north);
+  \draw[arr] (i2.south) -- (n1.north);
+  \draw[arr] (i3.south) -- (n2.north);
+  \node[font=\scriptsize, color=sigc] at (-0.6,-3.6) {80 addresses};
+  \node[font=\scriptsize, color=sigc] at (3.0,-3.6) {45 addresses};
+  \node[font=\scriptsize, color=sigc] at (6.6,-3.6) {74 addresses};
+\end{tikzpicture}
+\caption{Index nodes: the file system table maps names to inode numbers, and each inode lists the blocks of one file. Different files need different numbers of addresses (after slides 83 and 86).}
+\label{fig:inodes}
+\end{figure}
+
+\emph{Pros.} One read of the file system table and one read of the inode table together locate all the data blocks of a file, and only the inodes of open files need to be in memory, which consumes far less memory than a FAT.
+
+\emph{Cons.} The length of the list of block addresses varies from file to file, so the size of an inode would have to be variable too, which makes it hard to read the inode table efficiently (one cannot compute where inode $i$ starts). Can inodes be made fixed-size?
+
+\subsubsection{Attempt 4.1: indirect blocks}
+Give each inode a fixed number of address slots, and let some of them point to blocks that hold further addresses (\Cref{fig:indirect}).
+
+\begin{definition}[Direct and Indirect Blocks]
+  An inode has a fixed size. Its first slots (12 of them in ext2/3/4) are \emph{direct} block addresses, pointing to data blocks. Once those are used up, the \emph{indirect} block address is used: it points to a data block that contains a series of data block addresses. The \emph{double indirect} address points to a block of indirect-block addresses, and the \emph{triple indirect} address adds a third layer.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[db/.style={draw, fill=datac, minimum size=4.5mm},
+                    ib/.style={draw, fill=freec, minimum width=5mm, minimum height=6mm,
+                               path picture={\foreach \k in {1,...,4} \draw[thin] ($(path picture bounding box.south west)+(0,0.12*\k)$) -- ++(5mm,0);}}]
+  \node[cell, fill=greybg, minimum width=34mm, font=\scriptsize\bfseries] (h) at (0,0) {Index node};
+  \foreach \t/\c [count=\i] in {Direct block \#0/bootc, Direct block \#1/bootc, \dots/bootc, Direct block \#11/bootc,
+                                Indirect block/blue!60!black, Double indirect block/blue!60!black, Triple indirect block/blue!60!black} {
+    \node[cell, fill=\c, text=white, minimum width=26mm, font=\tiny\bfseries] (s\i) at (-0.4,-0.5*\i) {\t};
+    \node[cell, minimum width=8mm, right=0pt of s\i] (p\i) {$\bullet$};
+  }
+  \node[db] (d1) at (2.6,0.0) {}; \node[db] (d2) at (2.6,-0.7) {}; \node at (2.6,-1.25) {\dots}; \node[db] (d4) at (2.6,-1.8) {};
+  \draw[arr] (p1.east) -- (d1); \draw[arr] (p2.east) -- (d2); \draw[arr] (p4.east) -- (d4);
+  % single indirect
+  \node[ib] (i1) at (4.2,-2.5) {};
+  \foreach \k/\y in {1/-1.3,2/-1.9,3/-2.5} { \node[db] (e\k) at (5.4,\y) {}; \draw[arr] (i1.east) -- (e\k); }
+  \node at (5.4,-3.0) {\dots};
+  \draw[arr] (p5.east) -- (i1.west);
+  % double indirect
+  \node[ib] (j0) at (6.6,-3.0) {};
+  \foreach \k/\y in {1/-2.1,2/-3.9} {
+    \node[ib] (j\k) at (7.8,\y) {};
+    \draw[arr] (j0.east) -- (j\k.west);
+    \foreach \m/\dy in {1/0.45,2/0,3/-0.45} { \node[db] (f\k\m) at (9.0,\y+\dy) {}; \draw[arr] (j\k.east) -- (f\k\m); }
+  }
+  \node at (7.8,-3.0) {\vdots};
+  \draw[arr] (p6.east) -- (j0.west);
+  % triple indirect
+  \node[ib] (k0) at (4.2,-4.2) {};
+  \node[right=2pt of k0, font=\scriptsize] {\dots\ (three layers)};
+  \draw[arr] (p7.east) -- (k0.west);
+  \node[font=\tiny, align=center] at (5.0,-0.6) {1st layer of\\ indirect blocks};
+  \node[font=\tiny, align=center] at (8.3,-1.25) {2nd layer of\\ indirect blocks};
+  \node[ib] at (0.0,-4.6) {}; \node[font=\scriptsize, anchor=west] at (0.4,-4.6) {block of addresses};
+  \node[db] at (0.0,-5.2) {}; \node[font=\scriptsize, anchor=west] at (0.4,-5.2) {block of data};
+\end{tikzpicture}
+\caption{A fixed-size inode with 12 direct addresses and single, double, and triple indirect addresses (after slide 87).}
+\label{fig:indirect}
+\end{figure}
+
+How many addresses fit in one block? With 32-bit (4-byte) block addresses and 1\,KB blocks, an indirect block holds $1024 / 4 = 256$ addresses. Indirect blocks make the inode a fixed-length structure, and they increase the supported file size enormously.
+
+\begin{example}[Maximum File Size with Indirect Blocks]
+  \label{ex:maxfile}
+  Take 12 direct blocks, one single, one double, and one triple indirect block, block size $2^x$ bytes, and 4-byte addresses. A block of addresses holds $2^x / 4$ addresses, so the four kinds of slots reach $12$, $2^x/4$, $(2^x/4)^2$, and $(2^x/4)^3$ data blocks:
+  \[
+    \text{max file size} = \Bigl(12 + \frac{2^x}{4} + \Bigl(\frac{2^x}{4}\Bigr)^2 + \Bigl(\frac{2^x}{4}\Bigr)^3\Bigr) \times 2^x
+    = 12 \cdot 2^x + 2^{2x-2} + 2^{3x-4} + 2^{4x-6}.
+  \]
+  With 4\,KB blocks ($x = 12$), the last term dominates: $2^{42}$ bytes $= 4\,\text{TB}$.
+\end{example}
+
+\subsection{Summary of the Attempts}
+
+\begin{itemize}
+  \item Contiguous allocation is used on CD-ROMs; the file allocation table in FAT16 and FAT32; index nodes in ext2, ext3, and ext4.
+  \item Block-based addressing solved external fragmentation and the problem of growing and shrinking files. It introduced internal fragmentation, and the need to store \emph{file allocation information}.
+  \item The FAT approach stores the allocation information of the entire FS in one large table. The inode approach uses many small tables, one per file.
+\end{itemize}
+
+Three things are still missing: how to manage free space, how to support directories, and how to store file attributes. They are the subject of the next section.

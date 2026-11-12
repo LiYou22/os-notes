@@ -1,0 +1,243 @@
+\section{Files}
+\label{sec:files}
+
+\subsection{File Systems, Operating Systems, and Devices}
+
+Hard disks, USB flash drives, and CDs look nothing alike, but they all contain file systems. A process never touches the device directly: it invokes system calls, which in turn invoke the \emph{FS operations} in the kernel, which access the storage device (\Cref{fig:fsview}).
+
+\begin{definition}[File System Layout and Operations]
+  Every file system (FS) has its own \emph{layout} of the storage device. The layout defines what things are stored on the device and where they are stored. The set of \emph{FS operations} defines how the OS works with that layout; in other words, the OS knows the FS layout and works with it.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \fill[uspace] (0,1.6) rectangle (11,3.2);
+  \fill[kspace] (0,0) rectangle (11,1.6);
+  \fill[greybg] (0,-3.0) rectangle (11,0);
+  \node[anchor=west, font=\small] at (0.2,2.4) {User space};
+  \node[anchor=west, font=\small] at (0.2,0.8) {OS kernel};
+  \node[anchor=west, font=\small] at (0.2,-1.5) {Devices};
+  \node[box, fill=tsk, minimum width=22mm] (p) at (6.5,2.4) {Process};
+  \node[box, fill=dirc!70, minimum width=26mm] (op) at (6.5,0.8) {FS operations};
+  \node[draw, fill=white, rounded corners=2pt, minimum width=20mm, minimum height=9mm, align=center, font=\small] (hdd) at (3.6,-1.5) {Hard disk};
+  \node[draw, fill=white, rounded corners=2pt, minimum width=20mm, minimum height=9mm, align=center, font=\small] (usb) at (6.5,-1.5) {USB drive};
+  \node[draw, fill=white, rounded corners=2pt, minimum width=20mm, minimum height=9mm, align=center, font=\small] (cd) at (9.4,-1.5) {CD};
+  \draw[arr] (p) -- node[right, font=\scriptsize] {system calls} (op);
+  \foreach \d in {hdd,usb,cd} \draw[arr] (op) -- (\d.north);
+  \node[font=\scriptsize\itshape, anchor=south] at (6.5,-2.9) {They all contain file systems.};
+\end{tikzpicture}
+\caption{A process reaches a storage device only through system calls and the kernel's FS operations, which know the device's FS layout (after slides 3--6).}
+\label{fig:fsview}
+\end{figure}
+
+Two non-identities are worth stating explicitly.
+\begin{itemize}
+  \item \emph{OS $\neq$ FS.} An OS supports a file system; one OS can support more than one FS (Linux reads ext4, FAT32, NTFS, \dots), and one FS can be accessed by more than one OS (a FAT32 USB drive works on Windows, macOS, and Linux).
+  \item \emph{Storage device $\neq$ FS.} A file system must be stored on a device, but a device may contain no FS at all, some devices host several (\Cref{sec:fsmeta}), and some devices are virtual. The device is just a dummy container: it does not need to know what or how many file systems are stored on it. The OS instructs it how to store the data.
+\end{itemize}
+
+Two things are stored on every device and are common to all existing file systems: \emph{files} and \emph{directories}. This section and the next cover what they are and their basic operations. \Crefrange{sec:alloc}{sec:ext} then look at how an FS lays them out on the disk (which affects the speed of operations, the reliability of the FS, and the allocation and deallocation of space), with FAT32 and ext2/3/4 as the case studies; \Cref{sec:vfs} explains how the Linux kernel manipulates a file system and why Linux can support so many of them.
+
+\subsection{Why Files, and How They Are Named}
+
+Memory is fast, but it vanishes after a reboot. \emph{Files} provide long-term information storage: they are \emph{persistent}. Files can also be shared objects that several processes access concurrently, which brings back the questions of mutual exclusion and synchronization from \Cref{ch:proc}.
+
+When a file is created it must be given a name, and the name is extremely important to users: nobody wants to remember the raw address \code{0xDEADBEEF} instead of \code{final\_exam\_solution.txt}. Naming conventions differ between systems.
+\begin{itemize}
+  \item \emph{Length.} DOS used the ``8.3 format'': 8 characters of name plus 3 of extension. Windows NT, Linux, and macOS allow 255 characters of name and extension combined.
+  \item \emph{Case sensitivity.} Windows and newer macOS are case insensitive; Linux and older macOS are case sensitive.
+  \item \emph{Extensions} are application dependent. For \code{gcc} the extension is important (\code{.c} versus \code{.o}); for a text editor it is not. Windows takes extensions very seriously.
+\end{itemize}
+
+\begin{definition}[Pathname and Filename]
+  In \code{/usr/bin/ls}, \code{/usr/bin} is the directory that \code{ls} resides in, \code{ls} is the \emph{filename}, and \code{/usr/bin/ls} is the \emph{pathname}. A pathname is unique across the entire file system. A filename is not; it is unique only within the directory it resides in.
+\end{definition}
+
+Uniqueness matters because, in \code{open("/some\_dir/some\_file", \dots)}, the kernel translates the pathname into a set of data addresses on the device. The pathname is the \emph{key}: if it were not unique, the OS could not locate the data.
+
+\subsection{File Attributes}
+
+What is stored for a file? Take a text file \code{example.txt} containing \code{hello world} and a newline. Its \emph{content} is the 12 bytes; its \emph{name} is stored in the content of its parent directory (\Cref{sec:dirs}); and its \emph{size}, 12, is an \emph{attribute} of the file.
+
+\begin{definition}[File Attributes]
+  The \emph{attributes} of a file are the data the FS keeps about it besides its content: size, owner, permissions, timestamps, the location of the content, and so on. A file can have empty content, but never an empty set of attributes. Some attributes are important (size, owner, permission), some less so (creation, modification, and last-access times). \emph{Dynamic} attributes, such as the file pointer and the open-file count, exist only while the kernel is manipulating the file.
+\end{definition}
+
+Attributes are \emph{FS dependent}, not OS dependent. \Cref{tab:attrs} compares three families: FAT32 (DOS, Windows 9x), NTFS (Windows NT), and ext2/3/4 (Linux).
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{lccc}
+  \toprule
+  Attribute & FAT32 & NTFS & ext2/3/4 \\
+  \midrule
+  Size & yes & yes & yes \\
+  Owner (user ID, group ID) & no & yes & yes \\
+  Permission & no & yes & yes \\
+  Link count & no & no & yes \\
+  Creation, modification, last-access times & yes & yes & yes \\
+  Location of the file content & yes & yes & yes \\
+  \bottomrule
+\end{tabular}
+\caption{Typical file attributes in three file systems (after slides 19--20). The design of FAT32 includes no security ingredients at all.}
+\label{tab:attrs}
+\end{table}
+
+The most important attribute is the last one: the \emph{location of the file content} tells the OS where to find the data. Most of \Crefrange{sec:alloc}{sec:ext} is about how to represent it.
+
+\needspace{7\baselineskip}
+\begin{example}[Attributes in \code{ls -l}]
+\label{ex:lsattr}
+The long listing of \code{ls} shows most of the attributes of a file:
+\begin{lstlisting}[style=sh]
+$ ls -l final_exam_solution.txt
+-rw-r--r--. 1 yt2475 yt2475grp 4096 Oct  7 07:35 final_exam_solution.txt
+\end{lstlisting}
+  From left to right: the permission, the link count, the user ID, the group ID, the file size, the modification time, and the filename. On ext4, all of them are attributes; on FAT32, only the size, the time, and the name exist.
+\end{example}
+
+\subsubsection{Reading attributes with \code{stat}}
+The command \code{stat} prints all attributes of a file:
+\begin{lstlisting}[style=sh]
+$ stat /bin/ls
+  File: /bin/ls
+  Size: 140928      Blocks: 280        IO Block: 4096   regular file
+Device: fd00h/64768d    Inode: 67249975    Links: 1
+Access: (0755/-rwxr-xr-x)  Uid: (    0/    root)   Gid: (    0/    root)
+Access: 2025-03-30 21:18:37.340683011 -0400
+Modify: 2024-08-16 09:37:52.000000000 -0400
+Change: 2024-11-13 18:11:12.239417899 -0500
+ Birth: 2024-11-13 18:11:12.009415252 -0500
+\end{lstlisting}
+It is a thin wrapper around the \code{stat()} system call (\code{man 2 stat}), which fills in a \code{struct stat}:
+\begin{lstlisting}
+struct stat {
+    dev_t     st_dev;         /* ID of device containing file */
+    ino_t     st_ino;         /* inode number */
+    mode_t    st_mode;        /* file type and mode */
+    nlink_t   st_nlink;       /* number of hard links */
+    uid_t     st_uid;         /* user ID of owner */
+    gid_t     st_gid;         /* group ID of owner */
+    dev_t     st_rdev;        /* device ID (if special file) */
+    off_t     st_size;        /* total size, in bytes */
+    blksize_t st_blksize;     /* blocksize for filesystem I/O */
+    blkcnt_t  st_blocks;      /* number of 512B blocks allocated */
+    struct timespec st_atim;  /* time of last access */
+    struct timespec st_mtim;  /* time of last modification */
+    struct timespec st_ctim;  /* time of last status change */
+};
+\end{lstlisting}
+Note \code{st\_blocks} counts 512-byte units: \code{/bin/ls} has 280 of them, i.e., $143\,360$ bytes, or 35 blocks of 4\,KB: the smallest whole number of blocks that holds its $140\,928$ bytes.
+
+\begin{example}[Two Uses of \code{stat()}]
+  \code{stat()} checks whether a file exists without opening it, and reads its size:
+\begin{lstlisting}
+int main(int argc, char **argv) {
+  struct stat file_stat;
+  if (stat(argv[1], &file_stat) == -1)
+    exit(1);
+  printf("file size of argv[1] = %ld\n", file_stat.st_size);
+}
+\end{lstlisting}
+  It also tells whether a name refers to a directory or a regular file, through the type bits of \code{st\_mode}:
+\begin{lstlisting}
+  if (S_ISDIR(file_stat.st_mode))
+    printf("%s is a directory\n", argv[1]);
+  if (S_ISREG(file_stat.st_mode))
+    printf("%s is a regular file\n", argv[1]);
+\end{lstlisting}
+\end{example}
+
+\begin{keypoint}[The Two Components of a File]
+  Every file has a unique pathname, which leads to its two important components: a \emph{set of file attributes} and the \emph{file content}. They are usually stored in separate locations.
+\end{keypoint}
+
+\subsection{File Types}
+
+Unix has four kinds of files: \emph{regular files}, \emph{directory files} (\Cref{sec:dirs}), \emph{link files}, and \emph{device files} (\Cref{sec:dirs}).
+
+Regular files are either \emph{text files}, which contain only human-readable text (C programs, HTML documents, JSON files; inspect them with \code{cat}), or \emph{binary files}, which can contain any data (executables, images, videos, encoded data; inspect them with \code{xxd}). The command \code{file} tells the type of a file.
+
+\begin{definition}[Magic Number]
+  Most binary files begin with a special pattern, the \emph{magic number}, that identifies the format. GIF files always start with the string \code{GIF87a} or \code{GIF89a}; PDF files always start with \code{\%PDF-}.
+\end{definition}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[cell/.style={draw, fill=kspace, minimum width=20mm, align=center, font=\scriptsize, inner sep=2pt},
+                    fout/.style={font=\scriptsize\ttfamily, anchor=north, align=left}]
+  % generic layout
+  \node[cell, minimum height=9mm, anchor=north] (m) at (0,0) {Magic\\number};
+  \node[cell, minimum height=20mm, anchor=north] (r) at (m.south) {Remaining\\content};
+  \draw[decorate, decoration={brace, amplitude=5pt}, thick] ([xshift=3pt]m.north east) -- node[right=6pt, font=\scriptsize, align=center] {Entire\\file\\content} ([xshift=3pt]r.south east);
+  \node[font=\scriptsize\itshape, anchor=south] at (m.north) {any binary file};
+  % a real GIF
+  \node[cell, minimum height=9mm, anchor=north, font=\scriptsize\ttfamily] (gm) at (4.6,0) {GIF89a};
+  \node[cell, minimum height=20mm, anchor=north, fill=kspace!40] (gr) at (gm.south) {image\\data};
+  \node[font=\scriptsize\ttfamily, anchor=south] at (gm.north) {cat.gif};
+  % a text file faking it
+  \node[cell, minimum height=9mm, anchor=north, font=\scriptsize\ttfamily, fill=jobA!60] (fm) at (8.2,0) {GIF89a};
+  \node[font=\scriptsize\ttfamily, anchor=south] at (fm.north) {fake.txt};
+  \node[font=\scriptsize\itshape, cmt, align=center, anchor=north] at (fm.south) {(nothing else)};
+  % what file reports
+  \node[fout] at (4.6,-3.2) {\$ file cat.gif\\GIF image data};
+  \node[fout] at (8.2,-3.2) {\$ file fake.txt\\GIF image data};
+  \draw[densely dashed, cmt] (6.4,0.4) -- (6.4,-4.0);
+  \node[font=\scriptsize, sigc, align=center, anchor=north] at (8.2,-1.6) {extension says text,\\magic number says GIF};
+\end{tikzpicture}
+\caption{Most binary files begin with a magic number that identifies the format. \code{file} reads only those first bytes, so a text file whose content is just \code{GIF89a} is reported as a GIF image (after slides 28--29).}
+\label{fig:magic}
+\end{figure}
+
+\code{file} knows the magic numbers of all file types (they are listed in \code{/usr/share/file/magic}), and it does \emph{not} look at the extension. Try it: create a text file containing only \code{GIF89a}, and \code{file} will report a GIF image (\Cref{fig:magic}).
+
+\subsection{Opening and Reading a File}
+
+\Cref{fig:open} shows what happens when a process opens a file.
+\begin{enumerate}
+  \item The process sends a pathname to the OS.
+  \item The OS looks for the \emph{file attributes} of the target file on the disk.
+  \item The disk returns the attributes.
+  \item The OS associates the attributes with a small number, the \emph{file descriptor} (\Cref{sec:kernel}).
+  \item The OS returns the file descriptor to the process.
+\end{enumerate}
+Opening a file involves only the pathname and the attributes, never the file content.
+
+Reading then goes the other way:
+\begin{enumerate}
+  \item The process sends a file descriptor to the OS.
+  \item The OS reads the attributes associated with that descriptor (the data location, the current file position, \dots) and uses them to locate the required data.
+  \item The disk returns the data.
+  \item The OS keeps the data in a \emph{buffer cache} (\Cref{sec:fsperf}) and copies it to the process.
+\end{enumerate}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[st/.style={circle, draw, fill=white, inner sep=1pt, font=\tiny\bfseries}]
+  \fill[uspace] (0,0) rectangle (3.2,3.4);
+  \fill[kspace] (3.2,0) rectangle (8.2,3.4);
+  \fill[greybg] (8.2,0) rectangle (10.8,3.4);
+  \node[font=\scriptsize\itshape, anchor=north west] at (0,3.4) {User};
+  \node[font=\scriptsize\itshape, anchor=north west] at (3.2,3.4) {Kernel};
+  \node[font=\scriptsize\itshape, anchor=north west] at (8.2,3.4) {Disk};
+  \node[box, fill=tsk, minimum width=20mm] (p) at (1.6,2.4) {Process};
+  \node[box, fill=jobA, font=\scriptsize\ttfamily] (path) at (1.6,1.0) {unique pathname};
+  \node[box, fill=dirc!70] (op) at (5.0,1.0) {FS operations};
+  \node[draw, fill=usedc, minimum width=14mm, minimum height=9mm, align=center, font=\scriptsize] (attr) at (6.7,2.4) {attributes};
+  \node[box, fill=jobA, font=\scriptsize] (fd) at (4.6,2.4) {fd $=3$};
+  \node[draw, fill=white, rounded corners=2pt, minimum width=16mm, minimum height=10mm, font=\scriptsize] (d) at (9.5,1.7) {Disk};
+  \draw (p) -- (path);
+  \draw[arr] (path) -- node[st, above] {1} (op);
+  \draw[arr] (op.east) -- node[st, below, pos=0.5] {2} (d.west |- op);
+  \draw[arr, sigc] (d.west |- attr) -- node[st, above] {3} (attr);
+  \draw[densely dotted, thick, sigc] (attr) -- node[st, above] {4} (fd);
+  \draw[arr, sigc] (fd) -- node[st, above] {5} (p);
+\end{tikzpicture}
+\caption{Opening a file: the pathname goes in, the file's attributes come from the disk, and the process gets back a file descriptor associated with them. The content is not touched (after slide 30).}
+\label{fig:open}
+\end{figure}
+
+\subsubsection{Sequential versus random access}
+Old systems offered only \emph{sequential access}: bytes or records had to be read in order from the beginning, as on a cassette tape, with no seek operation (although rewinding was usually allowed). Modern systems offer \emph{random access}: an application can read bytes at any position, in any order, and a \emph{seek} operation (\code{lseek()}) moves the file position.

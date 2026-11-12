@@ -121,6 +121,8 @@
 
 % Unboxed statements: bold run-in heading
 % \NMplain{env}{Name}{body font}
+\RequirePackage{needspace}
+\RequirePackage{float}
 \newcommand{\NMplain}[3]{%
   \newenvironment{#1}[1][]{%
     \par\medskip\crefalias{stmt}{#1}\refstepcounter{stmt}%

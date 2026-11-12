@@ -1,0 +1,63 @@
+\chapter{File Systems}
+\label{ch:fs}
+
+% Figure palette for this chapter, after the slides' disk-layout colors
+\definecolor{metac}{HTML}{FAC8F5}   % FS metadata (FAT, inode table)
+\definecolor{bootc}{HTML}{3D9BF0}   % boot sector, superblock, table headers
+\definecolor{freec}{HTML}{B9DDE0}   % free blocks
+\definecolor{usedc}{HTML}{8CC63F}   % allocated blocks
+\definecolor{dirc}{HTML}{FF9800}    % directory files
+\definecolor{rowc}{HTML}{FFF59D}    % table cells
+\definecolor{datac}{HTML}{009688}   % data blocks
+\tikzset{
+  blk/.style={draw, minimum height=7mm, inner sep=1pt, font=\scriptsize},
+  cell/.style={draw, fill=rowc, minimum height=5mm, minimum width=10mm, inner sep=1pt, font=\scriptsize},
+  hcell/.style={cell, fill=bootc, text=white, font=\scriptsize\bfseries},
+}
+% \dirtab{prefix}{x}{title}{inode/name,...}: an ext2 directory drawn as a table
+% at x; its cells are named prefix-n<i> (inode) and prefix-f<i> (filename)
+\newcommand{\dirtab}[4]{%
+  \begin{scope}[xshift=#2]
+    \node[font=\scriptsize\bfseries] at (1.0,0.55) {#3};
+    \node[hcell, minimum width=17mm] at (0,0) {Inode \#};
+    \node[hcell, minimum width=6mm] at (1.15,0) {\dots};
+    \node[hcell, minimum width=16mm] at (2.25,0) {Filename};
+    \foreach \n/\f [count=\i] in {#4} {
+      \node[cell, minimum width=17mm] (#1-n\i) at (0,-0.5*\i) {\n};
+      \node[cell, minimum width=6mm] at (1.15,-0.5*\i) {\dots};
+      \node[cell, minimum width=16mm, font=\scriptsize\ttfamily] (#1-f\i) at (2.25,-0.5*\i) {\f};
+    }
+  \end{scope}}
+
+Supplementary reading:
+\begin{itemize}
+  \item \cite{CSAPP} Sections 10.1--10.9.
+  \item \cite{OSTEP} Chapters 38--42.
+  \item \cite{MOS} Chapter 4 and Section 10.6.
+  \item \cite{OSC} Section 11.8, and Chapters 13--15.
+\end{itemize}
+
+This chapter follows the slide deck \emph{3 --- File Systems}. It looks at a file system from two viewpoints: the \emph{static} view (what is the layout of the file system on the device?) and the \emph{dynamic} view (what operations does it support, and how does the kernel carry them out?).
+\begin{itemize}
+  \item \Cref{sec:files}: what a file is, file attributes and \code{stat()}, file types, and what opening and reading a file involve;
+  \item \Cref{sec:dirs}: directories, pathname lookup, links, device files, and the file-related system calls;
+  \item \Cref{sec:alloc}: how to place files on a disk, from contiguous allocation through linked lists and the FAT to inodes with indirect blocks;
+  \item \Cref{sec:fsmeta}: free-space management, directories and attributes on disk, the boot sector and the superblock, and disk partitions;
+  \item \Cref{sec:fat}: FAT32 in action: its layout, directory entries, and reading, writing, and deleting a file;
+  \item \Cref{sec:ext}: ext2/3/4 in action: block groups, inodes, directory entries, hard and symbolic links, and creating and deleting a file;
+  \item \Cref{sec:vfs}: how the Linux kernel represents an open file, and the virtual file system;
+  \item \Cref{sec:fsperf}: data fragmentation, the buffer cache, and LRU replacement;
+  \item \Cref{sec:recovery}: what a crash does to a file system, \code{fsck}, and journaling;
+  \item \Cref{sec:raid}: RAID levels 0, 1, 4, 5, and 6.
+\end{itemize}
+
+\input{chapters/fs/01-files}
+\input{chapters/fs/02-directories}
+\input{chapters/fs/03-allocation}
+\input{chapters/fs/04-metadata}
+\input{chapters/fs/05-fat32}
+\input{chapters/fs/06-ext}
+\input{chapters/fs/07-vfs}
+\input{chapters/fs/08-performance}
+\input{chapters/fs/09-recovery}
+\input{chapters/fs/10-raid}

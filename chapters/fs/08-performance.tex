@@ -1,0 +1,77 @@
+\section{File System Performance}
+\label{sec:fsperf}
+
+\subsection{Data Fragmentation}
+
+\begin{definition}[Data Fragmentation]
+  \emph{Data fragmentation} is the situation in which the allocated blocks of one file are scattered randomly over the disk. It is different from external fragmentation (the free space between allocated blocks) and internal fragmentation (the wasted space inside an allocated block), both from \Cref{sec:alloc}.
+\end{definition}
+
+Why does scattering matter? Some basics of the hard disk drive: data is stored sector by sector, magnetically, on spinning platters; a movable \emph{disk arm} carries a \emph{disk head} that reads and writes. One rotation of the platters under a stationary head retrieves a run of consecutive sectors. If the blocks of a file are packed together, in neighboring sectors, the head rarely moves; if they are scattered, it moves a lot.
+
+\begin{keypoint}
+  The number of disk head movements determines the time it takes to access a file.
+\end{keypoint}
+
+The cause of data fragmentation is external fragmentation: deleting old data leaves unallocated space between allocated space, and a new file may fill these holes, so its data is fragmented. The remedy is \emph{defragmentation}: pack the data blocks of each file together. Windows provides the Microsoft Drive Optimizer; Linux provides \code{e2defrag} for ext2/ext3 and \code{e4defrag} for ext4.
+
+\subsection{The Buffer Cache}
+
+First of all, \emph{cache} is pronounced ``cash'', not ``catch''. In the computing world, the faster a device is, the more cash it costs: disks are cheaper than RAM, and RAM is cheaper than CPU registers. A cache is a temporary storage designed to save both time and cash.
+
+Suppose you expect a file to be accessed frequently, e.g., the root directory. To save disk access time you would like to keep it in memory at all times; that piece of memory is a cache. But you cannot afford a large RAM, so when the cache runs out of space, the root directory may have to be written back to disk to make room. Who decides when? The \emph{cache replacement algorithm}, controlled by the kernel.
+
+\begin{definition}[Buffer Cache]
+  The \emph{buffer cache} (or \emph{block cache}) holds everything related to the file system that is read from the disk: inodes, (parts of) the FAT, directory entries, and data blocks. When a disk access finishes (the \emph{primary copy} is on disk), the data is kept in kernel-space memory as a \emph{secondary copy}; a later read of the same data is served from that copy without any disk access. The data stays in the cache even after the corresponding file is closed.
+\end{definition}
+
+Why kernel space? Because every disk access is invoked by a system call and happens in kernel mode.
+
+\begin{example}[The Cache at Work]
+  Search for the word \code{int} in \code{/usr/include}, twice, discarding the output:
+\begin{lstlisting}[style=sh]
+$ time grep -r int /usr/include > /dev/null
+real    1m11.706s
+user    0m1.155s
+sys     0m2.402s
+$ time grep -r int /usr/include > /dev/null
+real    0m1.933s
+user    0m0.995s
+sys     0m0.932s
+\end{lstlisting}
+  The CPU time (\code{user} + \code{sys}) is small both times. The first run spends over a minute of real time waiting for the disk; the second finds every directory entry, inode, and data block already in the buffer cache.
+\end{example}
+
+\subsubsection{Writing cached data}
+When someone writes data that is cached, there are two approaches.
+\begin{itemize}
+  \item \emph{Write-through}: both copies are updated together, so the OS has to wait for the disk to finish. Windows uses this approach, for reliability.
+  \item \emph{Write-back}: the secondary copy is updated first, and the update of the primary copy is delayed. Linux uses this approach, for performance.
+\end{itemize}
+
+\subsection{Least Recently Used Replacement}
+
+\begin{definition}[LRU]
+  In \emph{least recently used} (LRU) replacement, every cached item has an \emph{age}. After each cache access, the age of the accessed item is set to 0 and the ages of all other items are incremented by 1. On a \emph{cache miss} (the requested item is not in the cache), the data is read from the disk; if there is free cache space, the new item is simply stored, and otherwise the least recently used (oldest) item is evicted, i.e., written back to disk if it was modified, to make room. For performance, the items are kept sorted by age.
+\end{definition}
+
+\begin{example}[LRU]
+  The cache holds eight items, sorted by age:
+  \begin{center}
+  \small
+  \begin{tabular}{l*{8}{c}}
+    \toprule
+    Initially & A:0 & B:2 & C:3 & D:4 & E:6 & F:8 & G:9 & H:11 \\
+    Read H (hit) & H:0 & A:1 & B:3 & C:4 & D:5 & E:7 & F:9 & G:10 \\
+    Read Z (miss) & Z:0 & H:1 & A:2 & B:4 & C:5 & D:6 & E:8 & F:10 \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+  Reading H, the oldest item, makes it the youngest. Reading Z misses; the cache is full, so the oldest item, G, is evicted, the remaining ages are incremented, and Z enters with age 0.
+\end{example}
+
+\subsection{Benefits and Risks}
+
+The buffer cache increases read performance, and with write-back it improves the user experience, since a \code{write()} returns without waiting for the disk. You can force the cache to be committed to the disk with the \code{sync()} system call or the \code{sync} command.
+
+So it seems always a good idea to keep a copy of a file in memory. But what if the computer suffers a sudden loss of power, or a kernel panic (a blue screen of death)? Writes that existed only in the cache are lost, and the file system on the disk may be left in an \emph{inconsistent} state. Tools such as \code{fsck} on Linux and \code{chkdsk} on DOS and Windows check the consistency of a file system. That is the subject of the next section.

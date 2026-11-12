@@ -1,0 +1,287 @@
+\section{ext2/3/4 in Action}
+\label{sec:ext}
+
+\subsection{Facts About ext4}
+
+The primary file system on Linux is \emph{ext4}, the fourth extended file system. Its default block size is 4\,KB (configurable from 1\,KB to 64\,KB), and its default block address is 32 bits, configurable to 64. Most of what follows holds for ext2 and ext3 as well.
+
+\subsection{Block Groups}
+
+\begin{definition}[Block Group]
+  An ext2/3/4 file system is partitioned into \emph{block groups} with the same internal structure: a block bitmap, an inode bitmap, an inode table, and the file content of that group. The \emph{group descriptor table} (GDT), stored after the superblock, records for each group where its block bitmap, inode bitmap, and inode table start.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm]
+  \draw[fill=bootc] (0,0) rectangle (1.0,0.7); \node[font=\scriptsize, text=white, align=center] at (0.5,0.35) {Super-\\ block};
+  \draw[fill=datac] (1.0,0) rectangle (1.4,0.7);
+  \foreach \g in {0,...,3} { \draw[fill=freec] (1.4+1.6*\g,0) rectangle ++(1.6,0.7); \node[font=\scriptsize] at (2.2+1.6*\g,0.35) {Group \g}; }
+  \draw[fill=rowc] (3.0,1.4) rectangle (4.0,2.1); \node[font=\tiny, align=center] at (3.5,1.75) {block\\ bitmap};
+  \draw[fill=rowc] (4.0,1.4) rectangle (5.0,2.1); \node[font=\tiny, align=center] at (4.5,1.75) {inode\\ bitmap};
+  \draw[fill=metac] (5.0,1.4) rectangle (6.0,2.1); \node[font=\tiny, align=center] at (5.5,1.75) {inode\\ table};
+  \draw[fill=usedc] (6.0,1.4) rectangle (7.2,2.1); \node[font=\tiny, align=center] at (6.6,1.75) {file\\ content};
+  \draw[densely dotted] (3.0,1.4) -- (3.0,0.7); \draw[densely dotted] (7.2,1.4) -- (4.6,0.7);
+  \draw[arr] (0.4,1.5) node[above, font=\scriptsize] {group descriptor table} -- (1.2,0.7);
+\end{tikzpicture}
+\caption{An ext2/3/4 file system: the superblock and the group descriptor table, then block groups that all share one internal structure (after slide 152).}
+\label{fig:blockgroups}
+\end{figure}
+
+Why do this? For performance and reliability. Keeping the metadata of a group close to the file contents of the same group means the disk head does not have to travel a long distance between an inode and its data. And the metadata is scattered over the disk, so there is no single point of failure. (ext2/3/4 keep backup copies of the superblock and the GDT in some of the groups.)
+
+\begin{example}[Reading the Superblock]
+  \code{tune2fs -l} prints the superblock:
+\begin{lstlisting}[style=sh]
+# tune2fs -l /dev/sda1
+Filesystem OS type:       Linux
+Inode count:              122624
+Block count:              244983
+Reserved block count:     12249
+Free blocks:              228306
+Free inodes:              122586
+First block:              0
+Block size:               4096
+Blocks per group:         32768
+Fragments per group:      32768
+Inodes per group:         15328
+Inode blocks per group:   479
+First inode:              11
+Inode size:               128
+Journal inode:            8
+First orphan inode:       27
+\end{lstlisting}
+  The first group of lines is general file system information, the second describes the layout, and the third the inode usage. The numbers are consistent: $244\,983$ blocks at $32\,768$ per group make 8 groups, and $8 \times 15\,328 = 122\,624$ inodes; $15\,328$ inodes of 128 bytes fill $15\,328 \times 128 / 4096 = 479$ blocks per group.
+\end{example}
+
+\subsection{The Metadata Structures}
+
+For simplicity, consider a single block group from now on (\Cref{fig:extlayout}).
+\begin{itemize}
+  \item The \emph{block bitmap} stores the allocation status of the blocks of the group.
+  \item The \emph{inode bitmap} stores the allocation status of the inodes of the group.
+  \item The \emph{inode table} stores the contents of all the inodes of the group. Every inode has the same size, specified in the superblock, and the inodes are stored sequentially.
+\end{itemize}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm]
+  \draw[fill=bootc] (0,0) rectangle (1.0,0.7); \node[font=\scriptsize, text=white, align=center] at (0.5,0.35) {Super-\\ block};
+  \draw[fill=rowc] (1.0,0) rectangle (1.9,0.7); \node[font=\tiny, align=center] at (1.45,0.35) {block\\ bitmap};
+  \draw[fill=rowc] (1.9,0) rectangle (2.8,0.7); \node[font=\tiny, align=center] at (2.35,0.35) {inode\\ bitmap};
+  \draw[fill=metac] (2.8,0) rectangle (4.8,0.7); \node[font=\scriptsize] at (3.8,0.35) {Inode table};
+  \foreach \k [count=\j] in {2,1,1,0,1,0,0,1,1,1,0,2,0,1,1,0,0,1,1,0,1,1,0,0,1} {
+    \pgfmathsetmacro{\xx}{4.8+0.22*(\j-1)}
+    \ifnum\k=1 \draw[fill=usedc] (\xx,0) rectangle ++(0.22,0.7);
+    \else\ifnum\k=2 \draw[fill=dirc] (\xx,0) rectangle ++(0.22,0.7);
+    \else \draw[fill=freec] (\xx,0) rectangle ++(0.22,0.7); \fi\fi
+  }
+  \node[font=\scriptsize\ttfamily, anchor=south] at (2.35,0.75) {1110010\dots};
+  \foreach \i/\t in {0/1,1/2,2/3,3/\dots,4/100} \node[cell, fill=metac, minimum width=9mm] at (3.4+0.9*\i,-0.9) {\t};
+  \draw[densely dotted] (2.8,0) -- (2.95,-0.65); \draw[densely dotted] (4.8,0) -- (7.45,-0.65);
+  \foreach \i in {0,1,4} \draw[{Stealth[length=1.2mm]}-{Stealth[length=1.2mm]}] (2.95+0.9*\i,-1.3) -- node[below, font=\tiny] {128 B} (3.85+0.9*\i,-1.3);
+\end{tikzpicture}
+\caption{One block group: the bitmaps, and an inode table of fixed-size 128-byte inodes numbered from 1 (after slides 155--156).}
+\label{fig:extlayout}
+\end{figure}
+
+\subsubsection{The inode}
+An ext2 inode is a 128-byte structure (\Cref{tab:inode}); compare it with \code{struct stat} in \Cref{sec:files}, which is mostly a copy of it. Because inodes are fixed-size, the start of inode $i$ is at byte
+\[
+  \text{start of the inode table} + (i - 1) \times 128.
+\]
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{rl}
+  \toprule
+  Bytes & Value \\
+  \midrule
+  0--1 & file type and permission \\
+  2--3 & user ID \\
+  4--7 & lower 32 bits of the file size in bytes \\
+  8--23 & time information \\
+  24--25 & group ID \\
+  26--27 & link count \\
+  \dots & \dots \\
+  40--87 & 12 direct data block pointers \\
+  88--91 & single indirect block pointer \\
+  92--95 & double indirect block pointer \\
+  96--99 & triple indirect block pointer \\
+  \dots & \dots \\
+  108--111 & upper 32 bits of the file size in bytes \\
+  \bottomrule
+\end{tabular}
+\caption{The 128-byte ext2 inode. The 15 block pointers are those of \Cref{fig:indirect} (after slide 156).}
+\label{tab:inode}
+\end{table}
+
+\begin{definition}[Special Inodes]
+  Inodes are numbered from 1; there is no inode 0. The first 10 inodes are reserved for special purposes: inode 1 always points to the bad blocks, inode 2 always points to the \emph{root directory}, and inode 8 usually points to the journal's data blocks (\Cref{sec:recovery}). That is why the superblock above says ``First inode: 11''.
+\end{definition}
+
+Inode 2 answers the question left open in \Cref{sec:fsmeta}: in ext2/3/4, the root directory is found by reading a fixed inode.
+
+\subsection{Directory Entries}
+
+A directory is stored in data blocks, and it always contains at least two entries: \code{.} and \code{..}. Each directory entry has four fields: the inode number (4 bytes), the entry length (2 bytes), the name length (2 bytes), and the filename (up to 255 bytes).
+
+\begin{center}
+\small
+\begin{tabular}{rrrl}
+  \toprule
+  Inode \# & Entry length & Name length & Filename \\
+  \midrule
+  123 & 12 & 2 & \code{.} \\
+  2 & 12 & 3 & \code{..} \\
+  5\,086 & 16 & 7 & \code{12.jpg} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+Why is the entry of \code{12.jpg} 16 bytes long, not $4 + 2 + 2 + 7 = 15$? Two reasons. The name length counts the terminating \code{'\textbackslash 0'}, which is why the 6-character name \code{12.jpg} has length 7 and \code{.} has length 2. And entries are padded for byte alignment to a multiple of 4 bytes, so $15$ rounds up to $16$ (and $10$, for \code{.}, to $12$). Because the entry length is stored explicitly, an entry can also be \emph{longer} than its name requires; deletion uses that (below).
+
+\begin{remark}
+  This is the slides' model. The actual ext2 on-disk entry splits the 2-byte name-length field into a 1-byte name length and a 1-byte file type, and does not store the terminating \code{'\textbackslash 0'}; the padding to a multiple of 4 is the same. Check the ext2 documentation if the details matter.
+\end{remark}
+
+\subsection{Hard Links}
+
+\begin{definition}[Hard Link]
+  A \emph{hard link} is a directory entry pointing to an existing file, i.e., to an existing inode. No new file content and no new inode are created.
+\end{definition}
+
+\begin{example}[Making a Hard Link]
+\begin{lstlisting}[style=sh]
+# ls /dir1/12.jpg
+12.jpg
+# ln /dir1/12.jpg /my_link
+\end{lstlisting}
+  A new directory entry \code{my\_link} with inode number 5086 is added to \code{/} (\Cref{fig:hardlink}). Conceptually, this creates one file with two filenames. Deleting one of the two directory entries does not delete the file content.
+\end{example}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \dirtab{d}{0cm}{Directory: \code{/dir1}}{123/., 2/.., 5{,}086/12.jpg}
+  \dirtab{r}{5.2cm}{Directory: \code{/}}{2/., 2/.., 5{,}086/my\_link}
+  \node[cell, fill=usedc, minimum width=18mm, font=\scriptsize\bfseries] (ino) at (3.6,-2.6) {inode 5086};
+  \node[cell, fill=bootc, text=white, minimum width=18mm, below=0pt of ino, font=\tiny\bfseries] {link count $= 2$};
+  \draw[arr] (d-n3.south) |- (ino.west);
+  \draw[arr] (r-n3.south) |- (ino.east);
+\end{tikzpicture}
+\caption{After \code{ln /dir1/12.jpg /my\_link}, two directory entries in two directories refer to the same inode, whose link count is 2 (after slides 159--161).}
+\label{fig:hardlink}
+\end{figure}
+
+\begin{keypoint}[Link Count]
+  The \emph{link count} field of the inode keeps track of how many directory entries point to the file. Removing a link with the \code{unlink()} system call (which is what \code{rm} calls) decrements it by 1. Only when the link count becomes 0 is the file content removed: its data blocks and its inode.
+\end{keypoint}
+
+In \Cref{fig:hardlink}, \code{rm /my\_link} brings the link count of inode 5086 from 2 to 1 and leaves the file intact; a subsequent \code{rm /dir1/12.jpg} brings it to 0, and the file is deleted.
+
+\subsubsection{Directories and their link counts}
+Two hard links are special: the entry \code{.} of a directory is a hard link to the directory itself, and \code{..} is a hard link to its parent. Hence:
+\begin{itemize}
+  \item When a regular file is created, its link count is always 1 (its entry in the parent).
+  \item When a directory is created, its link count is always 2: its entry in the parent, and its own \code{.} (\Cref{fig:dirlinks}). Each subdirectory created inside it later adds 1, through the subdirectory's \code{..}.
+\end{itemize}
+\begin{lstlisting}[style=sh]
+# stat /boot/grub/menu.lst
+  File: `/boot/grub/menu.lst'
+  Size: 4552        Blocks: 16         IO Block: 4096   regular file
+Device: 801h/2049d  Inode: 30669       Links: 1
+# mkdir temp
+# stat temp
+  File: `temp'
+  Size: 4096        Blocks: 8          IO Block: 4096   directory
+Device: 804h/2052d  Inode: 10994310    Links: 2
+\end{lstlisting}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \dirtab{p}{0cm}{Parent of \code{temp}}{123/., 2/.., 10{,}994{,}310/temp}
+  \dirtab{q}{5.6cm}{The new directory \code{temp}}{10{,}994{,}310/., 123/..}
+  \draw[arr, densely dashed] (p-f3.east) to[out=0, in=180] node[below right, font=\scriptsize] {link} (q-n1.west);
+  \draw[arr, densely dashed] (q-f1.east) to[out=0, in=0, looseness=2] node[right, font=\scriptsize] {link} (q-f1.south east);
+\end{tikzpicture}
+\caption{A new directory has two links: its entry in the parent, and its own entry \code{.}; its \code{..} adds a link to the parent (after slide 164).}
+\label{fig:dirlinks}
+\end{figure}
+
+\begin{example}[The Link Count of the Root]
+\begin{lstlisting}[style=sh]
+# ls -F /
+bin/    dev/   initrd/          lib/         mnt/   root/  sys/  var/
+boot/   etc/   initrd.img@      lost+found/  opt/   sbin/  tmp/  vmlinuz@
+cdrom@  home/  initrd.img.old@  media/       proc/  srv/   usr/  vmlinuz.old@
+# stat /
+  File: `/'
+  Size: 4096          Blocks: 8          IO Block: 4096   directory
+Device: 802h/2050d    Inode: 2           Links: 21
+\end{lstlisting}
+  The root is inode 2, as promised. It has 19 subdirectories (the entries marked \code{/}; those marked \code{@} are symbolic links and do not count). Its 21 links are the \code{..} of the 19 subdirectories, plus its own \code{.}, plus its own \code{..}, since the parent of \code{/} is \code{/} itself.
+\end{example}
+
+Removing an (empty) directory with \code{rmdir()} is therefore as simple as removing its directory entry from the parent and decrementing the link counts.
+
+\subsection{Symbolic Links}
+
+\begin{definition}[Symbolic Link]
+  A \emph{symbolic link} is a file of its own, whose content is the pathname of its target. Unlike a hard link, a new inode is created for it.
+\end{definition}
+
+\begin{lstlisting}[style=sh]
+# ln -s /dir1/12.jpg /my_link
+# ls -l /my_link
+/my_link -> /dir1/12.jpg
+\end{lstlisting}
+The new entry \code{my\_link} in \code{/} now has its own inode, 6120, rather than 5086. Since it stores a path and not an inode number, a symbolic link can cross file systems and can point to a directory, but it dangles if the target is removed.
+
+Where is the target path stored? It depends on its length. A path shorter than 60 characters is stored right inside the inode, in the space of the 12 direct and 3 indirect block pointers: $(12 + 3) \times 4 = 60$ bytes. A longer path gets a data block of its own.
+
+\subsection{Creating a File}
+
+Creating \code{/dir1/hello.txt} takes six steps.
+\begin{enumerate}
+  \item Use a linear search in the inode bitmap to find an unallocated inode for the new file: inode 1024.
+  \item Use a linear search in the block bitmap to find unallocated data blocks for it.
+  \item Read the inode of the root directory, inode 2.
+  \item Following its data block pointers, read the directory entries of \code{/}, and find \code{dir1}: inode 123.
+  \item Read inode 123 and its data blocks, and construct the directory entries of \code{/dir1}: \code{.}, \code{..}, \code{panic.c} (inode 456, length 16), \code{picture.jpg} (inode 894, length 20).
+  \item Add a new directory entry \code{hello.txt} with inode 1024 to \code{/dir1}.
+\end{enumerate}
+
+\subsection{Deleting a File}
+
+Deleting \code{/dir1/picture.jpg}:
+\begin{enumerate}
+  \item Read the inode and the data blocks of \code{/dir1}, and locate the inode of \code{picture.jpg}: 894.
+  \item Read inode 894 and decrement its link count. It becomes 0.
+  \item Deallocate the data blocks and the inode by resetting the corresponding bits in the block bitmap and the inode bitmap.
+  \item Change the entry length of the directory entry \emph{before} \code{picture.jpg}: the new length of \code{panic.c} is its original length plus that of \code{picture.jpg}, $16 + 20 = 36$.
+\end{enumerate}
+
+\begin{center}
+\small
+\begin{tabular}{rrl@{\qquad}rrl}
+  \toprule
+  \multicolumn{3}{c}{Before} & \multicolumn{3}{c}{After} \\
+  Inode \# & Length & Filename & Inode \# & Length & Filename \\
+  \midrule
+  123 & 12 & \code{.} & 123 & 12 & \code{.} \\
+  2 & 12 & \code{..} & 2 & 12 & \code{..} \\
+  456 & 16 & \code{panic.c} & 456 & \textcolor{sigc}{36} & \code{panic.c} \\
+  894 & 20 & \code{picture.jpg} & \textcolor{cmt}{894} & \textcolor{cmt}{20} & \textcolor{cmt}{\code{picture.jpg}} \\
+  1024 & 20 & \code{hello.txt} & 1024 & 20 & \code{hello.txt} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+The change of the entry length makes a traversal of the directory jump from \code{panic.c} straight to \code{hello.txt}, skipping the deleted entry. This leaves holes among the directory entries, so when a new file is created in the directory, the FS should check whether some hole is large enough for the new entry.
+
+\begin{keypoint}
+  As in FAT32, the file is not actually deleted: its entry is skipped, and its bits are cleared, but its data blocks are not erased. In ext2 even the data block pointers in the inode remain; in ext3 and ext4 they are removed, which makes recovery much harder.
+\end{keypoint}

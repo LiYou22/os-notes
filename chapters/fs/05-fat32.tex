@@ -1,0 +1,203 @@
+\section{FAT32 in Action}
+\label{sec:fat}
+
+\subsection{Facts About FAT32}
+
+\begin{itemize}
+  \item Cluster size: 512\,B, 1\,KB, 2\,KB, \dots, 128\,KB, or 256\,KB (powers of two).
+  \item Cluster number length: 28 bits.
+  \item Maximum file size: $4\,294\,967\,295$ bytes (4\,GB $-$ 1), because the file-size field is 4 bytes long and its largest value is \code{0xFFFFFFFF}.
+  \item Maximum partition size, with 32\,KB clusters: $32 \times 2^{10} \times 2^{28} = 2^{43}$ bytes $= 8\,\text{TB}$.
+\end{itemize}
+
+\subsection{The Layout, Read from the Boot Sector}
+
+Create a FAT32 file system in a disk image and let \code{fsck.fat} read its boot sector:
+\begin{lstlisting}[style=sh]
+# mkfs.fat -F 32 fat32.disk
+# fsck.fat -v fat32.disk
+......
+       512 bytes per logical sector
+       512 bytes per cluster
+        32 reserved sectors
+First FAT starts at byte 16384 (sector 32)
+         2 FATs, 32 bit entries
+    516608 bytes per FAT (= 1009 sectors)
+Root directory start at cluster 2 (arbitrary size)
+Data area starts at byte 1049600 (sector 2050)
+    129022 data clusters (66059264 bytes)
+......
+\end{lstlisting}
+This determines the whole layout (\Cref{fig:fatlayout}). The first 32 sectors are the \emph{reserved area}, starting with the boot sector; the first FAT begins at sector 32 (byte $32 \times 512 = 16384$). Two FATs of 1009 sectors each follow, and the data area starts at sector $32 + 1009 + 1009 = 2050$. In this example a cluster is one sector, 512 bytes. Believe it or not, Microsoft named the first data cluster \emph{cluster 2}: no cluster has the address 0 or 1. The root directory starts at cluster 2.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm]
+  \draw[fill=bootc] (0,0) rectangle (1.2,0.8); \node[font=\scriptsize, text=white, align=center] at (0.6,0.4) {Boot\\ sector};
+  \draw[fill=blue!60!black] (1.2,0) rectangle (1.45,0.8);
+  \draw[fill=metac] (1.45,0) rectangle (2.75,0.8); \node[font=\scriptsize] at (2.1,0.4) {FAT 1};
+  \draw[fill=metac] (2.75,0) rectangle (4.05,0.8); \node[font=\scriptsize] at (3.4,0.4) {FAT 2};
+  \foreach \k [count=\j] in {2,2,0,0,0,1,1,1,0,1,0,0,1,1,1,1,1,0,0,2,0,1,0,0,1,1,1,0,0,1} {
+    \pgfmathsetmacro{\xx}{4.05+0.22*(\j-1)}
+    \ifnum\k=1 \draw[fill=usedc] (\xx,0) rectangle ++(0.22,0.8);
+    \else\ifnum\k=2 \draw[fill=dirc] (\xx,0) rectangle ++(0.22,0.8);
+    \else \draw[fill=freec] (\xx,0) rectangle ++(0.22,0.8); \fi\fi
+  }
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (0,-0.25) -- node[below, font=\scriptsize] {32 sectors} (1.45,-0.25);
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (1.45,-0.25) -- node[below, font=\scriptsize] {1009} (2.75,-0.25);
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (2.75,-0.25) -- node[below, font=\scriptsize] {1009} (4.05,-0.25);
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (4.05,-0.25) -- node[below, font=\scriptsize] {data area, from sector 2050} (10.65,-0.25);
+  \draw[arr] (4.6,1.5) node[above, font=\scriptsize] {cluster 2 (root directory)} -- (4.16,0.8);
+  \draw[arr] (8.3,1.5) node[above, font=\scriptsize] {one cluster (512 bytes)} -- (7.8,0.8);
+  \node[font=\scriptsize, anchor=south west] at (1.2,0.85) {reserved area};
+\end{tikzpicture}
+\caption{The FAT32 layout reported by \code{fsck.fat}, not drawn to scale (after slides 120--124).}
+\label{fig:fatlayout}
+\end{figure}
+
+\subsection{Reading a Directory}
+
+To list \code{C:\textbackslash windows}:
+\begin{enumerate}
+  \item \emph{Locate the root directory.} Read the boot sector: the root directory is in cluster 2, which is located right behind the FATs.
+  \item \emph{Find the directory entry} \code{windows} in cluster 2. Besides the regular entries, every directory has the entries \code{.} (this directory) and \code{..} (the parent directory); in the root, both refer to cluster 2.\footnote{This follows the slides. On a real FAT32 volume the root directory has no \code{.} and \code{..} entries at all, and the \code{..} entry of a directory whose parent is the root stores cluster 0 rather than 2.} The entry \code{windows} says that the directory starts at cluster 123.
+  \item \emph{Follow cluster 123} and read all its directory entries: \code{.} (cluster 123), \code{..} (cluster 2), \code{explorer.exe} (cluster 32), \dots
+  \item \emph{Return} each directory entry, which is what \code{dir} prints:
+\begin{lstlisting}[style=sh]
+c:\> dir c:\windows
+......
+06/13/2007  1,033,216    explorer.exe
+08/04/2004     69,120    notepad.exe
+\end{lstlisting}
+\end{enumerate}
+
+\subsection{The Directory Entry}
+
+A FAT directory entry is a 32-byte structure (\Cref{tab:fatdirent}). Since attributes live in the directory entry in FAT (\Cref{sec:fsmeta}), this structure is all the FS knows about a file.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{rl}
+  \toprule
+  Bytes & Value \\
+  \midrule
+  0 & first character of the filename (\code{0x00} or \code{0xE5} means unallocated) \\
+  1--10 & remaining $7 + 3$ characters of the filename and extension \\
+  11 & file attributes (e.g., read only, hidden) \\
+  12 & reserved \\
+  13--19 & creation and access time information \\
+  20--21 & high 2 bytes of the first cluster number ($0$ in FAT12 and FAT16) \\
+  22--25 & written time information \\
+  26--27 & low 2 bytes of the first cluster number \\
+  28--31 & file size \\
+  \bottomrule
+\end{tabular}
+\caption{The 32-byte FAT directory entry (after slide 128).}
+\label{tab:fatdirent}
+\end{table}
+
+\begin{example}[The Entry of \code{explorer.exe}]
+  \label{ex:fatdirent}
+  The entry of \code{explorer.exe}, byte by byte (\code{...} marks bytes not shown):
+\begin{lstlisting}[style=sh]
+ 0:  'e' 'x' 'p' 'l' 'o' 'r' 'e' 'r'
+ 8:  'e' 'x' 'e' ... ... ... ... ...
+16:  ... ... ... ... 00  00  ... ...
+24:  ... ... 20  00  00  C4  0F  00
+\end{lstlisting}
+  The 8-character name and the 3-character extension are stored without the dot. Bytes 20--21 are $00\,00$: the high half of the cluster number is $0$. Bytes 26--27 are $20\,00$. Reading them left to right as a number gives $\code{0x2000} = 8192$. Why not $32$, as the directory listing says?
+\end{example}
+
+\begin{definition}[Endianness]
+  \emph{Endianness} is the order in which a machine (the entire computer architecture) stores the bytes of a multi-byte value. Take the 4-byte value $1234567890 = \code{0x499602D2}$. A \emph{little-endian} machine stores the least significant byte at the smallest address: \code{D2 02 96 49} (e.g., Intel). A \emph{big-endian} machine stores the most significant byte at the smallest address: \code{49 96 02 D2} (e.g., SPARC, and network protocols).
+\end{definition}
+
+FAT is little endian. Bytes 26--27, \code{20 00}, therefore mean $\code{0x0020} = 32$: the file starts at cluster 32. Likewise, the size field \code{00 C4 0F 00} means $\code{0x000FC400} = 1\,033\,216$ bytes, the size \code{dir} printed.
+
+\subsubsection{Long filenames}
+In the old days, Uncle Bill set the rule that every file follows the 8.3 naming scheme. He later removed the constraint with a backward-compatible but super ugly design: \emph{LFN} (long filename) entries.
+\begin{itemize}
+  \item The regular 8.3 entry is still there, so old systems keep working.
+  \item In front of it come one or more LFN entries, each holding up to 13 characters of the long name in Unicode (2 bytes per character): 5 in bytes 1--10, 6 in bytes 14--25, and 2 in bytes 28--31.
+  \item Byte 0 is a sequence number, and the sequence is upside down: LFN \#3, \#2, \#1, then the regular entry.
+  \item Byte 11, the attribute byte, is always \code{0x0F} for an LFN entry, a combination that old systems ignore; byte 13 is a checksum of the 8.3 name, which ties the LFN entries to their regular entry.
+\end{itemize}
+
+\subsection{Reading a File}
+
+\begin{enumerate}
+  \item Read the first cluster number from the directory entry: \code{explorer.exe} starts at cluster 32.
+  \item Look up the next cluster in the FAT, and read that cluster: FAT entry 32 holds 33.
+  \item Repeat until an EOF entry is found in the FAT: entry 33 holds EOF, so the file is clusters 32 and 33. A FAT32 entry is EOF if its value is at least \code{0x0FFFFFF8}.
+\end{enumerate}
+Two notes. The kernel usually needs to know all the cluster numbers before the actual reading starts, so a file is not necessarily read sequentially. And besides EOF, unallocated ($0$), and allocated, a cluster can also be \emph{damaged}, i.e., contain bad sectors; the FAT value of a damaged cluster is \code{0x0FFFFFF7}.
+
+\subsection{Writing a File}
+
+To append one cluster to \code{explorer.exe} (\Cref{fig:fatwrite}):
+\begin{enumerate}
+  \item Locate the cluster at the end of the file by following the chain: cluster 33.
+  \item Look up the \emph{FSINFO} structure, in the reserved area, to find the next free cluster: 34. (The location of FSINFO is written in the boot sector; FSINFO is where FAT32 keeps the two hints of \Cref{fig:fathints}.)
+  \item Allocate the cluster by changing the FATs and FSINFO: entry 33 becomes 34, entry 34 becomes EOF, the number of free clusters drops from 100 to 99, and the next free cluster becomes 35. \emph{Both} FATs must be updated.
+\end{enumerate}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \foreach \lab/\x in {Before/0, After/6.2} {
+    \begin{scope}[xshift=\x cm]
+      \node[font=\small\bfseries] at (1.4,0.8) {\lab};
+      \node[hcell, minimum width=20mm, font=\tiny\bfseries] (h1) at (0,0) {\# of free clusters};
+      \node[hcell, minimum width=20mm, font=\tiny\bfseries, below=0pt of h1] (h2) {Next free cluster};
+      \node[font=\scriptsize\itshape, anchor=north] at (h2.south) {FSINFO};
+    \end{scope}
+  }
+  \foreach \c/\v [count=\i] in {2/EOF, \dots/\dots, 32/33, 33/EOF, 34/0, 35/0} {
+    \node[font=\scriptsize, anchor=east] at (2.9,0.6-0.5*\i) {\c};
+    \node[cell, fill=metac, minimum width=12mm] (o\i) at (3.6,0.6-0.5*\i) {\v};
+  }
+  \begin{scope}[xshift=6.2cm]
+    \foreach \c/\v [count=\i] in {2/EOF, \dots/\dots, 32/33, 33/34, 34/EOF, 35/0} {
+      \node[font=\scriptsize, anchor=east] at (2.9,0.6-0.5*\i) {\c};
+      \node[cell, fill=metac, minimum width=12mm] (n\i) at (3.6,0.6-0.5*\i) {\v};
+    }
+    \node[draw=sigc, thick, fit=(n4)(n5), inner sep=0pt] {};
+  \end{scope}
+  \node[cell, minimum width=8mm] at (1.4,0) {100};
+  \node[cell, minimum width=8mm] at (1.4,-0.5) {34};
+  \node[cell, minimum width=8mm, draw=sigc, thick] at (7.6,0) {99};
+  \node[cell, minimum width=8mm, draw=sigc, thick] at (7.6,-0.5) {35};
+  \node[font=\scriptsize\itshape, color=cmt] at (3.6,-3.1) {FAT (both copies)};
+  \node[font=\scriptsize\itshape, color=cmt] at (9.8,-3.1) {FAT (both copies)};
+\end{tikzpicture}
+\caption{Appending cluster 34 to a file that ends at cluster 33: two FAT entries and both FSINFO fields change (after slides 139--141).}
+\label{fig:fatwrite}
+\end{figure}
+
+If more than one extra cluster is needed, a circular, next-available search is performed to find each further unallocated cluster. Even after the writing finishes, the kernel still searches for one more unallocated cluster, so that the ``next free cluster'' hint in FSINFO again names a free cluster.
+
+\subsection{Deleting a File}
+
+To delete \code{explorer.exe}, now clusters 32, 33, and 34:
+\begin{enumerate}
+  \item Find the directory entry and, from it and the FAT, the locations of the clusters.
+  \item Set all the next-cluster fields of that file in the FATs to $0$.
+  \item Update the FSINFO structure: the number of free clusters goes from 99 to 102, and the next free cluster becomes 32.
+  \item Change the first character of the filename to \code{0xE5}, which marks the entry as unallocated (\code{explorer.exe} becomes \code{\aa xplorer.exe} when \code{0xE5} is shown as a character).
+\end{enumerate}
+
+\begin{keypoint}[Lazy Deletion]
+  The file is not really deleted. Neither the clusters nor most of the directory entry are erased, so a search of the free space finds all deleted file contents, and they persist until the deallocated clusters are reused. This is a trade-off between performance (during deletion) and security.
+\end{keypoint}
+
+How to delete a file securely is a topic of its own (the slides point to \emph{Remembrance of Data Passed: A Study of Disk Sanitization Practices}). Conversely, how to recover a deleted file?
+\begin{itemize}
+  \item If you really care about the file, \emph{pull the power plug immediately}, which prevents its clusters from being overwritten. (Sorry, laptop users.)
+  \item If the file is no larger than one cluster, recovery is easy: the first cluster number is still in the directory entry. (Only the first character of the name is lost, so other files with the same suffix may also turn up.)
+  \item If it is larger than one cluster, the addresses of the other clusters are gone, since the FAT chain was zeroed. But because of the next-available search, the clusters of a file are likely to have been allocated contiguously. If not, you had better know the exact file size and checksum of the deleted file beforehand, so that you can recover it by brute force.
+\end{itemize}
+
+\subsection{Summary}
+
+FAT is a simple yet pretty good file system. Its space overhead is 4 bytes (one FAT entry) per data cluster. Security is not a consideration in its design: it keeps no owners or permissions, and it deletes lazily. It was widely deployed, and it still is: it dominates SD cards and USB flash drives because every OS can read it.

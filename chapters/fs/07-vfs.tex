@@ -1,0 +1,93 @@
+\section{Linux File System Internals}
+\label{sec:vfs}
+
+The previous sections were about the file organization level of \Cref{sec:alloc}. This one moves up to the logical representation level: how the kernel models a file. It faces two ways: toward the user program it speaks in file descriptors and file content; toward the disk, in metadata and file content.
+
+\subsection{From File Descriptor to Inode}
+
+\begin{lstlisting}
+int fd;
+fd = open("/dev/zero", O_RDONLY);   // a file descriptor, if the call succeeds
+\end{lstlisting}
+A user program is given a file descriptor as the abstract representation of an open file. It is so abstract that it is just a number. What does the number mean?
+
+There is a strong relationship between a process and its open files: each process has its own set of them, managed inside its \ts{} (\Cref{sec:kernel}). The chain of structures is as follows (\Cref{fig:openfile}).
+\begin{itemize}
+  \item The \ts{} has a pointer \code{*files} to a \code{struct files\_struct}, which manages all the open files of the process: an array \code{fd} of open files, and \code{next\_fd}, the next descriptor to hand out. By default every process starts with three open files: descriptor 0 for \code{stdin}, 1 for \code{stdout}, and 2 for \code{stderr}.
+  \item When the process calls \code{open()}, the \emph{file system module} reads the file's metadata from the disk: the directory entry (with the inode number), the block addresses, and so on.
+  \item The open file is represented as a \code{struct file} and added to the process. A new file descriptor, here 3, is allocated for it: the descriptor is the index of that \code{struct file} in the \code{fd} array.
+  \item The \code{struct file} refers to the \emph{directory entry} of the file, which in turn contains the name and the inode of the file.
+\end{itemize}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[kbox/.style={draw, rounded corners=3pt, text=white, font=\scriptsize\bfseries, align=center, inner sep=3pt},
+                    fl/.style={draw, fill=white, font=\scriptsize\ttfamily, inner sep=2pt, minimum height=4.5mm},
+                    slot/.style={draw, fill=dirc, font=\scriptsize, minimum size=4.5mm, inner sep=0pt}]
+  \node[kbox, fill=datac, minimum width=24mm, minimum height=17mm, anchor=north] (ts) at (0,0) {};
+  \node[font=\scriptsize\bfseries, text=white, anchor=north] at (ts.north) {struct task\_struct};
+  \node[fl] at (-0.55,-0.85) {pid}; \node[fl] at (0.45,-0.85) {counter};
+  \node[fl] (files) at (0.4,-1.4) {*files};
+  \node[kbox, fill=blue!60!black, minimum width=17mm, minimum height=17mm, anchor=north] (fs) at (2.6,0) {};
+  \node[font=\scriptsize\bfseries, text=white, align=center, anchor=north] at (fs.north) {struct\\ files\_struct};
+  \node[fl] at (2.6,-0.95) {next\_fd};
+  \node[fl] (fdarr) at (2.6,-1.4) {fd};
+  \draw[arr] (files.east) -- (fs.west |- files);
+  \foreach \k in {0,...,3} \node[slot] (s\k) at (4.2+0.75*\k,-1.4) {\k};
+  \draw[arr] (fdarr.east) -- (s0.west);
+  \foreach \k [evaluate=\k as \j using int(\k+1)] in {0,1,2} \draw[-{Stealth[length=1.3mm]}] (s\k.east) -- (s\j.west);
+  \node[draw, fill=metac, font=\scriptsize\bfseries, align=center] (mod) at (6.0,-0.2) {File system\\ module};
+  \draw[arr] (mod.south) -- (s3.north);
+  \node[kbox, fill=dirc, minimum width=24mm, minimum height=13mm, anchor=north] (file) at (4.9,-2.3) {};
+  \node[font=\scriptsize\bfseries, text=white, anchor=north] at (file.north) {struct file};
+  \node[fl] (de) at (4.9,-3.15) {directory entry};
+  \draw[arr] (s3.south) to[out=-90, in=90] (file.north);
+  \node[draw, fill=freec, rounded corners=3pt, minimum width=14mm, minimum height=13mm, anchor=north] (dent) at (7.6,-2.3) {};
+  \node[fl] at (7.6,-2.65) {name}; \node[fl] (ino) at (7.6,-3.15) {inode};
+  \draw[arr] (de.east) -- (dent.west |- de);
+  \node[draw, fill=greybg, cylinder, shape border rotate=90, aspect=0.25, minimum width=12mm, minimum height=10mm, font=\scriptsize] (disk) at (9.6,-1.4) {Disk};
+  \draw[arr, densely dotted] (ino.east) to[out=0, in=-90] (disk.south);
+  \draw[arr, densely dotted] (disk.west) -- (mod.east);
+  \begin{scope}[on background layer]
+    \node[fit={(ts)(fs)(mod)(file)(dent)}, fill=kspace, rounded corners=3pt, inner sep=8pt,
+          label={[font=\small\itshape, anchor=south east]south east:Kernel memory}] {};
+  \end{scope}
+\end{tikzpicture}
+\caption{An open file in the Linux kernel: the file descriptor 3 indexes the \code{fd} array of the process's \code{files\_struct}, whose entry is a \code{struct file} referring to the directory entry and inode of the file (after slides 183--187).}
+\label{fig:openfile}
+\end{figure}
+
+\begin{keypoint}[Scope of a File Descriptor]
+  The scope of a file descriptor is restricted to its process. Different processes may use different descriptors to refer to the same file, and the same descriptor number in two processes may refer to different files.
+\end{keypoint}
+
+\subsection{The Virtual File System}
+
+What is the file system module, then? It is the core of Linux's file system support: it implements how Linux deals with the disk, and it implements the \emph{virtual file system}.
+
+\begin{definition}[Virtual File System]
+  In the \emph{virtual file system} (VFS), each open file is associated with a set of file system functions: \code{open}, \code{close}, \code{read}, \code{write}, \code{lseek}, \dots{} They are just function pointers, the \emph{VFS functions}, and they are invoked by the FS-related system calls: \code{sys\_read()} calls the file's \code{read} pointer, and so on. The pointers refer to \emph{FS-specific} functions, and their values are set when the file is opened, according to where the file is: if it is on an ext4 partition, they point to the ext4 functions.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[grp/.style={draw, rounded corners=6pt, align=left, font=\scriptsize\ttfamily, inner sep=5pt}]
+  \node[grp, fill=greybg, rounded corners=0pt] (sys) at (0,0) {\textrm{\bfseries System calls}\\ sys\_open(...); sys\_close(...);\\ sys\_read(...); sys\_write(...);\\ sys\_lseek(...);};
+  \node[grp, fill=dirc!80, rounded corners=0pt] (vfs) at (6.4,0) {\textrm{\bfseries VFS functions}\\ open(...); close(...);\\ read(...); write(...);\\ lseek(...);};
+  \draw[arr] (sys) -- node[above, font=\scriptsize] {invoke} (vfs);
+  \node[grp, fill=metac] (ext) at (1.6,-2.6) {\textrm{\bfseries ext4 FS functions}\\ ext4\_open(...)\\ ext4\_close(...)\\ ext4\_read(...)\\ ext4\_write(...)\\ ext4\_lseek(...)};
+  \node[grp, fill=freec] (fat) at (5.0,-2.6) {\textrm{\bfseries FAT FS functions}\\ fat\_open(...)\\ fat\_close(...)\\ fat\_read(...)\\ fat\_write(...)\\ fat\_lseek(...)};
+  \node[grp, fill=rowc] (ntfs) at (8.4,-2.6) {\textrm{\bfseries NTFS FS functions}\\ ntfs\_open(...)\\ ntfs\_close(...)\\ ntfs\_read(...)\\ ntfs\_write(...)\\ ntfs\_lseek(...)};
+  \draw[arr, very thick, metac!70!black] (vfs.south) -- node[left, font=\scriptsize, black, align=right, pos=0.25, xshift=-4mm] {for a file on ext4,\\ pointers to ext4} (ext.north east);
+  \draw[arr, densely dashed] (vfs.south) -- (fat.north);
+  \draw[arr, densely dashed] (vfs.south) -- node[right, font=\scriptsize] {pointer assignments} (ntfs.north);
+\end{tikzpicture}
+\caption{The VFS: system calls invoke the VFS function pointers of the open file, which were assigned the functions of the file system the file lives on. For a file on ext4, invoking the VFS functions means invoking the ext4 functions (after slide 194).}
+\label{fig:vfs}
+\end{figure}
+
+This is the function-pointer technique of Lab~1 (\code{nyuc}) applied at kernel scale: a table of pointers is an interface, and each file system is an implementation of it.
+
+\emph{Pros.} The VFS lets the OS support multiple file systems at the same time, although the \code{open()} for ext4 is a lot different from the \code{open()} for FAT32. And it is easy to support a new file system in the future: all one has to do is implement the FS functions specified by the VFS structure. This is why Linux supports so many file systems.
+
+\emph{Cons.} The VFS cannot make use of special functions of a specific file system. Suppose some FS offers an operation that combines \code{open()} and \code{read()} for small, read-only files. The VFS structure has no slot for it, so no program can reach it through the system call interface.

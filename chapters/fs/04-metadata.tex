@@ -1,0 +1,172 @@
+\section{Free Space, Directories, and File System Information}
+\label{sec:fsmeta}
+
+\subsection{Free-Space Management}
+
+The FS must handle free space when a file is deleted, when a file is created, and when the file system itself is initialized. The design goals: keep track of \emph{every} free block, and be as FS independent as possible.
+
+\subsubsection{Attempt 1: a linked list of free blocks}
+Allocate data blocks that store the list of the addresses of the free blocks; the FS needs to remember the starting block of that list (which could be hard coded). How much space does this take? A 128\,GB disk with 1\,KB blocks has $128 \times 2^{30} / 2^{10} = 2^{27}$ blocks. With 32-bit block addresses, listing all of them takes $4 \times 2^{27} = 2^{29}$ bytes $= 512\,\text{MB}$ when the disk is empty.
+
+\subsubsection{Attempt 2: a bitmap}
+What we need to represent is just a series of Boolean values, one per block.
+
+\begin{definition}[Block Bitmap]
+  A \emph{block bitmap} has one bit per block: $0$ means the block is unallocated and $1$ means it is allocated.
+\end{definition}
+
+For the same disk, the bitmap takes $2^{27}$ bits $= 2^{24}$ bytes $= 16\,\text{MB}$, a factor of 32 smaller than the list, and independent of how full the disk is. ext2/3/4 use this implementation.
+
+\subsubsection{FAT's choice}
+FAT16 has almost no free-space management: the FAT itself indicates which clusters are free (entry value $0$), and nothing else. FAT32 adds two fields that \emph{hint} at the state of the free space: the location of the first free cluster, and the total number of free clusters (\Cref{fig:fathints}). They are only hints: the values are not necessarily correct.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[hcell, minimum width=17mm] (bh) at (0,0) {Block \#};
+  \node[hcell, minimum width=17mm, below=0pt of bh] (nh) {Next block};
+  \foreach \b/\n [count=\i] in {2/3, 3/EOF, 4/0, 5/0, 6/7, 7/8, 8/16, 9/0, \dots/\dots} {
+    \node[cell, minimum width=9mm, fill=bootc!40] at ($(bh.east)+(0.45+0.9*\i-0.9,0)$) {\b};
+    \node[cell, minimum width=9mm] (c\i) at ($(nh.east)+(0.45+0.9*\i-0.9,0)$) {\n};
+  }
+  \node[draw=sigc, thick, fit=(c3), inner sep=0pt] {};
+  \node[font=\scriptsize\itshape, anchor=south] at ($(bh.north east)+(4.05,0)$) {FAT16 and FAT32};
+  \node[draw, fill=rowc, align=left, font=\scriptsize] (hint) at (-1.2,-1.8) {First free cluster $= 4$\\ Number of free clusters $= 13$};
+  \node[font=\scriptsize\itshape, anchor=north] at (hint.south) {hints, FAT32 only};
+  \node[callout, anchor=west] at (4.6,-1.6) {``0'' represents a free cluster,\\ so the first free cluster is 4.};
+\end{tikzpicture}
+\caption{Free space in FAT: free clusters are the FAT entries equal to $0$; FAT32 additionally keeps two hints (after slide 102).}
+\label{fig:fathints}
+\end{figure}
+
+The FAT approach needs little space. But it is slow in calculating the total amount of free space (in FAT16, the whole FAT must be scanned), and slow in allocating free clusters for new data, since a linear search is performed from the start of the FAT (FAT16) or from the first free cluster (FAT32).
+
+\subsection{Directories}
+
+\begin{definition}[Directory, the FS View]
+  From the FS's point of view, a directory is just a list of directory entries stored as structured data, and therefore a special type of file. A directory entry contains at least the filename and the information about the data blocks of the file.
+\end{definition}
+
+A directory usually, but not necessarily, takes only one data block, so there may be a limit on the number of entries. What ``the information about the data blocks'' means depends on the allocation scheme (\Cref{fig:direntries}): with inodes, a directory entry maps a filename to an \emph{inode number}; with a FAT, it maps a filename to the \emph{first data block}, from which the FAT chain continues.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+  \node[hcell, minimum width=18mm] (a1) at (0,0) {Filename};
+  \node[hcell, minimum width=18mm, right=0pt of a1] (a2) {Inode number};
+  \node[cell, minimum width=18mm, font=\scriptsize\ttfamily, below=0pt of a1] (b1) {bin};
+  \node[cell, minimum width=18mm, right=0pt of b1] {1234};
+  \node[cell, minimum width=18mm, font=\scriptsize\ttfamily, below=0pt of b1] (c1) {etc};
+  \node[cell, minimum width=18mm, right=0pt of c1] {890};
+  \node[font=\scriptsize\bfseries, anchor=south] at ($(a1.north east)$) {inode: directory \code{/}};
+  \begin{scope}[xshift=5.5cm]
+    \node[hcell, minimum width=18mm] (d1) at (0,0) {Filename};
+    \node[hcell, minimum width=18mm, right=0pt of d1] {First data block};
+    \node[cell, minimum width=18mm, font=\scriptsize\ttfamily, below=0pt of d1] (e1) {rock.mp3};
+    \node[cell, minimum width=18mm, right=0pt of e1] {1234};
+    \node[cell, minimum width=18mm, font=\scriptsize\ttfamily, below=0pt of e1] (f1) {game.exe};
+    \node[cell, minimum width=18mm, right=0pt of f1] {890};
+    \node[font=\scriptsize\bfseries, anchor=south] at ($(d1.north east)$) {FAT: directory \code{C:\textbackslash}};
+  \end{scope}
+\end{tikzpicture}
+\caption{A directory entry points to an inode in an inode-based FS, and to the first data block in FAT (after slide 106).}
+\label{fig:direntries}
+\end{figure}
+
+The FS must also know where the \emph{root} directory is, in order to traverse the directory tree; that is part of the file system information below.
+
+\subsection{File Attributes}
+
+Where attributes live is FS dependent. In FAT16 and FAT32, file attributes are stored inside the \emph{directory entry}. In ext2/3/4, they are stored inside the \emph{inode}, and the directory entry holds only the name and the inode number.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm]
+  \def\stripe#1#2{%
+    \foreach \k [count=\j] in {#2} {
+      \pgfmathsetmacro{\xx}{#1+0.22*(\j-1)}
+      \ifnum\k=1 \draw[fill=usedc] (\xx,\y-0.35) rectangle ++(0.22,0.7);
+      \else\ifnum\k=2 \draw[fill=dirc] (\xx,\y-0.35) rectangle ++(0.22,0.7);
+      \else \draw[fill=freec] (\xx,\y-0.35) rectangle ++(0.22,0.7); \fi\fi
+    }}
+  \def\y{1.4}
+  \draw[fill=bootc] (0,1.05) rectangle (0.18,1.75);
+  \draw[fill=blue!60!black] (0.18,1.05) rectangle (0.36,1.75);
+  \draw[fill=metac] (0.36,1.05) rectangle (2.4,1.75); \node[font=\small] at (1.38,1.4) {FAT};
+  \draw[fill=rowc] (2.4,1.05) rectangle (2.62,1.75);
+  \stripe{2.62}{0,0,0,1,1,1,0,2,0,1,0,0,1,1,1,1,1,0,0,2,0,1,0,0,1,1,1,0}
+  \def\y{-0.6}
+  \draw[fill=bootc] (0,-0.95) rectangle (1.0,-0.25);
+  \draw[fill=metac] (1.0,-0.95) rectangle (3.0,-0.25); \node[font=\small] at (2.0,-0.6) {Inode table};
+  \draw[fill=rowc] (3.0,-0.95) rectangle (3.22,-0.25);
+  \stripe{3.22}{0,1,1,1,0,2,0,1,0,0,1,1,1,1,1,0,0,2,0,1,0,0,1,1,1}
+  \node[font=\scriptsize, align=center] (fs) at (-0.8,0.4) {free space\\ management};
+  \draw[arr] (fs) -- (0.27,1.05); \draw[arr] (fs) -- (0.5,-0.25);
+  \node[font=\scriptsize, align=center] (fa) at (1.9,0.4) {file allocation\\ management};
+  \draw[arr] (fa) -- (1.38,1.05); \draw[arr] (fa) -- (2.0,-0.25);
+  \node[font=\scriptsize] (rd) at (4.0,0.4) {root directory};
+  \draw[arr] (rd) -- (2.51,1.05); \draw[arr] (rd) -- (3.11,-0.25);
+  \node[font=\scriptsize, anchor=west] at (9.0,1.4) {FAT};
+  \node[font=\scriptsize, anchor=west] at (9.0,-0.6) {inode};
+  \draw[fill=usedc] (6.0,-1.6) rectangle ++(0.22,0.3); \node[font=\scriptsize, anchor=west] at (6.3,-1.45) {allocated};
+  \draw[fill=dirc] (7.5,-1.6) rectangle ++(0.22,0.3); \node[font=\scriptsize, anchor=west] at (7.8,-1.45) {directory};
+  \draw[fill=freec] (9.0,-1.6) rectangle ++(0.22,0.3); \node[font=\scriptsize, anchor=west] at (9.3,-1.45) {free};
+\end{tikzpicture}
+\caption{The two designs side by side. FAT keeps file allocation in the FAT, which also marks free clusters, plus a small free-space structure (the FSINFO hints of \Cref{fig:fathints}) in front of it; an inode-based FS has a separate free-space structure and an inode table. Both need to locate the root directory (after slide 110).}
+\label{fig:twolayouts}
+\end{figure}
+
+\subsection{File System Information}
+
+How large is a block? How many blocks are allocated, and how many are free? Where is the root directory? Where is the allocation information (the FAT or the inode table), and how large is it? None of this can be hard coded, because different storage devices have different needs. Every FS therefore reserves a region at a fixed location for exactly this information.
+
+\begin{definition}[Boot Sector and Superblock]
+  The \emph{boot sector} (FAT, NTFS) is the first 512 bytes of the file system. It stores the bytes per sector and the sectors per cluster (which together determine the cluster size), the number of FATs, the number of sectors of the reserved area, the cluster number of the root directory, and the sector number of the free-space data.
+
+  The \emph{superblock} (ext2/3/4) is a 1024-byte region that stores the number of inodes and of blocks in the FS, the numbers of unallocated inodes and blocks, the block size, the size of each inode structure, and the current and maximum mount counts.
+\end{definition}
+
+A \emph{sector} is the unit in which the disk itself reads and writes, traditionally 512 bytes. When the number of FATs is 2, the second FAT is a backup of the first. When the mount count of an ext2/3/4 FS reaches the maximum mount count, a file system check (\code{fsck}, \Cref{sec:recovery}) is performed.
+
+\subsection{Disk Partitions}
+
+We have been talking about file systems. But where is the file system? What is on a disk, really?
+
+\begin{definition}[Disk Partition]
+  A \emph{disk partition} is a logical space that hosts a file system. The first sector of the disk, the \emph{master boot record} (MBR), contains boot code, which specifies which partition to boot, and a \emph{partition table}, which stores the first sector, the length, and the type of each partition.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm]
+  \draw[fill=dirc] (0,0) rectangle (0.3,0.8);
+  \node[font=\tiny, align=center] at (0.15,0.4) {C\\O\\D\\E};
+  \draw[fill=datac] (0.3,0) rectangle (0.8,0.8);
+  \draw[fill=freec] (0.8,0) rectangle (10,0.8);
+  \foreach \x in {3.8,6.8,8.3} \draw[densely dashed] (\x,-0.1) -- (\x,1.2);
+  \draw[densely dashed] (0.8,-0.1) -- (0.8,1.2); \draw[densely dashed] (10,-0.1) -- (10,1.2);
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (0.8,1.05) -- node[above, font=\scriptsize] {Partition 1} (3.8,1.05);
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (3.8,1.05) -- node[above, font=\scriptsize] {Partition 2} (6.8,1.05);
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (6.8,1.05) -- (8.3,1.05);
+  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (8.3,1.05) -- (10,1.05);
+  \draw[fill=bootc] (0.8,0) rectangle (1.4,0.8); \node[font=\tiny, text=white, align=center] at (1.1,0.4) {boot\\ sector};
+  \draw[fill=bootc] (3.8,0) rectangle (4.4,0.8); \node[font=\tiny, text=white, align=center] at (4.1,0.4) {super-\\ block};
+  \node[font=\scriptsize, align=left, anchor=north west] (mbr) at (-0.4,-0.4) {MBR boot code: which partition to boot};
+  \node[font=\scriptsize, align=left, anchor=north west] (pt) at (5.2,-0.4) {partition table: first sector, length,\\ and type of each partition};
+  \draw[arr] (mbr.north west) ++(0.55,0) -- (0.15,0);
+  \draw[arr] (pt.north west) to[out=150, in=-60] (0.55,0);
+\end{tikzpicture}
+\caption{A disk with an MBR and partitions. Formatting partition 1 as FAT32 and partition 2 as ext4 writes a boot sector into one and a superblock into the other (after slides 115 and 117).}
+\label{fig:partitions}
+\end{figure}
+
+Modern systems have replaced the MBR with the GPT (GUID partition table), as part of the UEFI standard. Why partition a disk at all?
+\begin{itemize}
+  \item \emph{Performance}: a smaller file system is more efficient.
+  \item \emph{Multi-booting}: Linux, macOS, and Windows can be installed on one disk.
+  \item \emph{Data organization}: one logical drive for the OS-related files, one for personal documents, one for movies.
+\end{itemize}
+
+\begin{definition}[Formatting]
+  \emph{Formatting} a disk (more precisely, a partition) means creating and initializing a file system on it: writing an empty FAT and a boot sector, or an empty inode table, bitmaps, and a superblock. The tools are \code{format.exe} on DOS and Windows, \code{mkfs.fat}, \code{mkfs.ext2}, \code{mkfs.ext3}, \code{mkfs.ext4}, \dots{} on Linux, and \code{diskutil} on macOS.
+\end{definition}
