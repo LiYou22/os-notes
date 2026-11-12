@@ -1,28 +1,47 @@
 \chapter{System Call Reference}
 \label{app:syscalls}
 
-The process-management and IPC calls used in these notes, with the section where each is discussed.
+The process-management and IPC calls used in these notes, grouped by purpose, with what each returns and the section where it is discussed. Unless stated otherwise, a call that fails returns $-1$ and sets \code{errno}.
 
-\begin{center}
-\small
-\begin{tabular}{>{\ttfamily}l p{0.5\linewidth} l}
+{\small
+\begin{xltabular}{\linewidth}{@{}>{\ttfamily}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X l@{}}
   \toprule
-  \normalfont Call & What it does & See \\
+  \normalfont Call & What it does & Returns & See \\
   \midrule
-  getpid(), getppid() & PID of the caller, PID of its parent & \Cref{sec:fork} \\
-  fork() & clone the caller; returns the child's PID in the parent, $0$ in the child, $-1$ on failure; memory is shared copy-on-write & \Cref{sec:fork,sec:internals} \\
-  execve(), exec*() & replace the program the process runs; does not return on success; keeps the PID and the fd table & \Cref{sec:fork,sec:internals} \\
-  exit() & free memory, close files, leave a zombie, send \code{SIGCHLD} to the parent & \Cref{sec:internals} \\
-  wait(), waitpid() & block until a child terminates and reap it; $-1$ if there are no children & \Cref{sec:fork,sec:internals} \\
-  dup2(old, new) & make descriptor \code{new} refer to the open file of \code{old}; the basis of redirection & \Cref{sec:kernel} \\
-  kill(pid, sig) & send a signal to a process; \code{raise(sig)} sends it to the caller & \Cref{sec:signals} \\
-  signal(sig, h) & install a handler and return the old one; not possible for \code{SIGKILL} and \code{SIGSTOP} & \Cref{sec:signals} \\
-  pause() & block until a handled or terminating signal arrives & \Cref{sec:signals} \\
-  alarm(n), setitimer() & one-time or periodic timer delivering \code{SIGALRM} & \Cref{sec:signals} \\
-  sched\_yield() & give up the CPU and go to the back of the run queue & \Cref{sec:sched,sec:cs} \\
-  pipe(fd) & create a pipe: \code{fd[0]} is the read end, \code{fd[1]} the write end; reads block on empty, writes on full & \Cref{sec:ipc} \\
-  mmap() & map memory; \code{MAP\_SHARED | MAP\_ANONYMOUS} before \code{fork()} gives shared memory & \Cref{sec:ipc} \\
-  sem\_wait(), sem\_post() & POSIX semaphore \code{down()} and \code{up()}; \code{sem\_init()} with \code{pshared} $\neq 0$ for processes & \Cref{sec:cs} \\
+  \endfirsthead
+  \toprule
+  \normalfont Call & What it does & Returns & See \\
+  \midrule
+  \endhead
   \bottomrule
-\end{tabular}
-\end{center}
+  \endlastfoot
+  \multicolumn{4}{l}{\normalfont\bfseries Process creation and termination} \\
+  \addlinespace[2pt]
+  fork() & clone the caller; memory is shared copy-on-write & the child's PID in the parent, $0$ in the child, $-1$ on failure & \Cref{sec:fork,sec:internals} \\
+  execve(), exec*() & replace the program the process runs; keeps the PID and the fd table & does not return on success; $-1$ on failure & \Cref{sec:fork,sec:internals} \\
+  exit() & free memory, close files, leave a zombie, send \code{SIGCHLD} to the parent & does not return & \Cref{sec:internals} \\
+  wait(), waitpid() & block until a child terminates and reap it; \code{waitpid()} can choose the child and, with \code{WUNTRACED}, also report stops & the PID of the reaped child, its status in \code{*wstatus}; $-1$ at once if there are no children; \code{waitpid()} with \code{WNOHANG}: $0$ if no child has changed state & \Cref{sec:fork,sec:internals} \\
+  \midrule
+  \multicolumn{4}{l}{\normalfont\bfseries Process identification} \\
+  \addlinespace[2pt]
+  getpid(), getppid() & PID of the caller, PID of its parent & that PID; never fails & \Cref{sec:fork} \\
+  \midrule
+  \multicolumn{4}{l}{\normalfont\bfseries File descriptors and IPC} \\
+  \addlinespace[2pt]
+  dup2(old, new) & make descriptor \code{new} refer to the open file of \code{old}; the basis of redirection & \code{new} & \Cref{sec:kernel} \\
+  pipe(fd) & create a pipe: \code{fd[0]} is the read end, \code{fd[1]} the write end; reads block on empty, writes block on full & $0$; the two descriptors are written into \code{fd} & \Cref{sec:ipc} \\
+  mmap() & map memory; \code{MAP\_SHARED | MAP\_ANONYMOUS} before \code{fork()} gives shared memory & the address of the mapping; \code{MAP\_FAILED} on failure & \Cref{sec:ipc} \\
+  \midrule
+  \multicolumn{4}{l}{\normalfont\bfseries Signals and timers} \\
+  \addlinespace[2pt]
+  kill(pid, sig) & send a signal to a process; \code{raise(sig)} sends it to the caller & $0$ (\code{raise()}: nonzero on failure) & \Cref{sec:signals} \\
+  signal(sig, h) & install a handler; not possible for \code{SIGKILL} and \code{SIGSTOP} & the old handler; \code{SIG\_ERR} on failure & \Cref{sec:signals} \\
+  pause() & block until a handled or terminating signal arrives & only $-1$ (\code{EINTR}), after a handler returns & \Cref{sec:signals} \\
+  alarm(n), setitimer() & one-time or periodic timer delivering \code{SIGALRM} & \code{alarm()}: seconds left on the previous alarm, or $0$; \code{setitimer()}: $0$ & \Cref{sec:signals} \\
+  \midrule
+  \multicolumn{4}{l}{\normalfont\bfseries Scheduling and synchronization} \\
+  \addlinespace[2pt]
+  sched\_yield() & give up the CPU and go to the back of the run queue & $0$ & \Cref{sec:sched,sec:cs} \\
+  sem\_wait(), sem\_post() & POSIX semaphore \code{down()} and \code{up()}; \code{sem\_init()} with \code{pshared} $\neq 0$ for processes & $0$ & \Cref{sec:cs} \\
+\end{xltabular}
+}
