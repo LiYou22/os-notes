@@ -1,6 +1,25 @@
 \section{RAID}
 \label{sec:raid}
 
+% Slide colors of the RAID figures: data blocks cycle through rb0..rb7;
+% pc/qc are the parity blocks. The disk icon is the hdd pic of \Cref{sec:recovery}.
+\definecolor{rb0}{HTML}{00A1FF}\definecolor{rb1}{HTML}{ED220B}
+\definecolor{rb2}{HTML}{FDAD00}\definecolor{rb3}{HTML}{60D836}
+\definecolor{rb4}{HTML}{0075B9}\definecolor{rb5}{HTML}{B41700}
+\definecolor{rb6}{HTML}{F27100}\definecolor{rb7}{HTML}{1CB000}
+\definecolor{pc}{HTML}{FE42A1}\definecolor{qc}{HTML}{D31876}
+% \raidstrip{x}{n}: the blocks 0..n-1 to be stored, leftmost centred at (x, 0.95)
+\newcommand{\raidstrip}[2]{%
+  \foreach \i in {1,...,#2} {
+    \pgfmathtruncatemacro{\b}{\i-1}\pgfmathtruncatemacro{\c}{mod(\b,8)}
+    \node[fill=rb\c, font=\scriptsize, minimum size=4mm, inner sep=0pt] at (#1+0.47*\b,0.95) {\b};
+  }}
+% \raiddisk{x}{label}{platters}{fill/text/text color,...}: a disk and its blocks
+\newcommand{\raiddisk}[4]{%
+  \pic at (#1,0) {hdd={\scriptsize #2}{0.6}{#3}{0.17}};
+  \foreach \f/\t/\c [count=\k] in {#4}
+    \node[fill=\f, text=\c, font=\scriptsize, minimum width=4.6mm, minimum height=3.4mm, inner sep=0.8pt] at (#1,{-0.01-0.34*\k}) {\t};}
+
 \subsection{Motivation}
 
 \begin{itemize}
@@ -13,58 +32,43 @@
   A \emph{redundant array of inexpensive} (or \emph{independent}) \emph{disks} (RAID) uses an array of inexpensive disks as one storage unit, and uses redundancy to improve both performance and reliability. It is fast because the disks in the array are read and written simultaneously, and reliable because \emph{parity} (XOR) is used to detect and correct errors.
 \end{definition}
 
-There are seven RAID levels, 0 to 6, with different trade-offs between performance and reliability. The slides cover levels 0, 1, 4, 5, and 6 (\Cref{fig:raid}).
-
-\begin{figure}[htbp]
-\centering
-\begin{tikzpicture}[b/.style={draw, minimum width=11mm, minimum height=4.6mm, inner sep=0pt, font=\tiny},
-                    d/.style={b, fill=freec}, p/.style={b, fill=childc!60}, q/.style={b, fill=jobB}]
-  % \raidcol{x}{y}{label}{cells as style/text}
-  \newcommand{\raidcol}[4]{%
-    \node[font=\tiny\bfseries] at (#1,#2+0.35) {#3};
-    \foreach \s/\t [count=\k] in {#4} \node[\s] at (#1,#2-0.46*\k+0.46) {\t};}
-  \node[font=\small\bfseries, anchor=west] at (-0.7,0.9) {RAID 0: striping};
-  \foreach \c in {0,...,3} { \pgfmathtruncatemacro{\e}{\c+4} \raidcol{1.2*\c}{0}{Disk \c}{d/\c, d/\e} }
-  \node[font=\small\bfseries, anchor=west] at (6.0,0.9) {RAID 1: mirroring};
-  \raidcol{6.6}{0}{Disk 0}{d/0, d/1, d/2, d/3}
-  \raidcol{7.8}{0}{Disk 1}{d/0, d/1, d/2, d/3}
-  \begin{scope}[yshift=-2.6cm]
-    \node[font=\small\bfseries, anchor=west] at (-0.7,0.9) {RAID 4: striping with a parity disk};
-    \foreach \c in {0,...,3} { \pgfmathtruncatemacro{\e}{\c+4} \raidcol{1.2*\c}{0}{Data}{d/\c, d/\e} }
-    \raidcol{4.8}{0}{Parity}{p/$P_{0..3}$, p/$P_{4..7}$}
-  \end{scope}
-  \begin{scope}[yshift=-4.6cm]
-    \node[font=\small\bfseries, anchor=west] at (-0.7,0.9) {RAID 5: distributed parity};
-    \raidcol{0}{0}{Disk 0}{d/0, d/4, d/8, d/12}
-    \raidcol{1.2}{0}{Disk 1}{d/1, d/5, d/9, p/$P_{12..15}$}
-    \raidcol{2.4}{0}{Disk 2}{d/2, d/6, p/$P_{8..11}$, d/13}
-    \raidcol{3.6}{0}{Disk 3}{d/3, p/$P_{4..7}$, d/10, d/14}
-    \raidcol{4.8}{0}{Disk 4}{p/$P_{0..3}$, d/7, d/11, d/15}
-  \end{scope}
-  \begin{scope}[xshift=6.6cm, yshift=-4.6cm]
-    \node[font=\small\bfseries, anchor=west] at (-0.6,0.9) {RAID 6: double parity};
-    \raidcol{0}{0}{Disk 0}{d/0, d/3, d/6, p/P}
-    \raidcol{1.2}{0}{Disk 1}{d/1, d/4, p/P, q/Q}
-    \raidcol{2.4}{0}{Disk 2}{d/2, p/P, q/Q, d/9}
-    \raidcol{3.6}{0}{Disk 3}{p/P, q/Q, d/7, d/10}
-    \raidcol{4.8}{0}{Disk 4}{q/Q, d/5, d/8, d/11}
-  \end{scope}
-\end{tikzpicture}
-\caption{Block layouts of the RAID levels. Each column is a disk and each row a stripe; $P_{i..j}$ is the XOR of blocks $i$ to $j$ (after slides 248--253).}
-\label{fig:raid}
-\end{figure}
+There are seven RAID levels, 0 to 6, with different trade-offs between performance and reliability. The slides cover levels 0, 1, 4, 5, and 6 (\Crefrange{fig:raid}{fig:raid6}).
 
 \subsection{RAID 0: Non-Redundant Striping}
 
-Data is \emph{striped} across all disks of the array: block 0 on disk 0, block 1 on disk 1, and so on, round robin. There is no parity. With $N$ disks, performance is good, roughly an $N$-fold speedup, since $N$ consecutive blocks are transferred in parallel. Reliability is poor: any disk failure leads to data loss, and with $N$ disks a failure is $N$ times as likely as with one.
+Data is \emph{striped} across all disks of the array: block 0 on disk 0, block 1 on disk 1, and so on, round robin (\Cref{fig:raid}). There is no parity. With $N$ disks, performance is good, roughly an $N$-fold speedup, since $N$ consecutive blocks are transferred in parallel. Reliability is poor: any disk failure leads to data loss, and with $N$ disks a failure is $N$ times as likely as with one.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+  \raidstrip{1.205}{8}
+  \raiddisk{0.0}{Disk}{5}{rb0/0/black, rb4/4/black}
+  \raiddisk{1.9}{Disk}{5}{rb1/1/black, rb5/5/black}
+  \raiddisk{3.8}{Disk}{5}{rb2/2/black, rb6/6/black}
+  \raiddisk{5.7}{Disk}{5}{rb3/3/black, rb7/7/black}
+\end{tikzpicture}
+\caption{RAID 0: blocks 0--7 striped across four disks, without parity (after slide 248).}
+\label{fig:raid}
+\end{figure}
 
 \subsection{RAID 1: Mirroring}
 
-Keep a mirrored (shadow) copy of the data on a second disk. Read performance is good, roughly a 2-fold speedup, since either copy can serve a read, and reliability is good: the array survives one disk failure. The cost is high: every data disk needs a second disk holding the same data.
+Keep a mirrored (shadow) copy of the data on a second disk (\Cref{fig:raid1}). Read performance is good, roughly a 2-fold speedup, since either copy can serve a read, and reliability is good: the array survives one disk failure. The cost is high: every data disk needs a second disk holding the same data.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+  \raidstrip{0.245}{4}
+  \raiddisk{0.0}{Disk}{9}{rb0/0/black, rb1/1/black, rb2/2/black, rb3/3/black}
+  \raiddisk{1.9}{Disk}{9}{rb0/0/black, rb1/1/black, rb2/2/black, rb3/3/black}
+\end{tikzpicture}
+\caption{RAID 1: both disks hold the same blocks 0--3 (after slide 249).}
+\label{fig:raid1}
+\end{figure}
 
 \subsection{RAID 4: Striping with Parity}
 
-A set of data blocks, a \emph{parity group}, is striped across the data disks, and one extra disk holds the parity of each group. How does parity work? Look at a single bit position:
+A set of data blocks, a \emph{parity group}, is striped across the data disks, and one extra disk holds the parity of each group (\Cref{fig:raid4}). How does parity work? Look at a single bit position:
 \begin{center}
 \small
 \begin{tabular}{cccc|c}
@@ -79,15 +83,57 @@ A set of data blocks, a \emph{parity group}, is striped across the data disks, a
 \end{center}
 The parity bit is the XOR of the data bits, which maintains an \emph{invariant}: every row contains an even number of 1s. If one disk fails, each of its bits is the one that restores the even count, i.e., the XOR of the surviving bits in its row. So the array can recover from one disk failure.
 
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+  \raidstrip{2.155}{8}
+  \raiddisk{0.0}{Data}{5}{rb0/0/black, rb4/4/black}
+  \raiddisk{1.9}{Data}{5}{rb1/1/black, rb5/5/black}
+  \raiddisk{3.8}{Data}{5}{rb2/2/black, rb6/6/black}
+  \raiddisk{5.7}{Data}{5}{rb3/3/black, rb7/7/black}
+  \raiddisk{7.6}{Parity}{5}{pc/{$0{\oplus}1{\oplus}2{\oplus}3$}/white, qc/{$4{\oplus}5{\oplus}6{\oplus}7$}/white}
+\end{tikzpicture}
+\caption{RAID 4: four data disks and one parity disk; $\oplus$ is XOR (after slides 250--251).}
+\label{fig:raid4}
+\end{figure}
+
 Performance is good, roughly an $(N-1)$-fold speedup for reads and large writes, but not for random writes. Every small write must also update the parity block of its group, and all parity blocks are on one disk, so the parity disk carries a heavy load and becomes the bottleneck.
 
 \subsection{RAID 5: Striping with Distributed Parity}
 
-Same as RAID 4, except that the parity blocks are distributed across all disks in a round-robin fashion. There is no single parity disk, so performance is good even for random writes: writes to different stripes update parity on different disks. Reliability is the same: one disk failure can be recovered. The weakness: the array is vulnerable \emph{during recovery}. Rebuilding the failed disk requires reading all the other disks, and a second failure during that time means total loss.
+Same as RAID 4, except that the parity blocks are distributed across all disks in a round-robin fashion (\Cref{fig:raid5}). There is no single parity disk, so performance is good even for random writes: writes to different stripes update parity on different disks. Reliability is the same: one disk failure can be recovered. The weakness: the array is vulnerable \emph{during recovery}. Rebuilding the failed disk requires reading all the other disks, and a second failure during that time means total loss.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+  \raidstrip{0.275}{16}
+  \raiddisk{0.0}{Disk}{9}{rb0/0/black, rb4/4/black, rb0/8/black, rb4/12/black}
+  \raiddisk{1.9}{Disk}{9}{rb1/1/black, rb5/5/black, rb1/9/black, qc/{$12{\oplus}13{\oplus}14{\oplus}15$}/white}
+  \raiddisk{3.8}{Disk}{9}{rb2/2/black, rb6/6/black, pc/{$8{\oplus}9{\oplus}10{\oplus}11$}/white, rb5/13/black}
+  \raiddisk{5.7}{Disk}{9}{rb3/3/black, qc/{$4{\oplus}5{\oplus}6{\oplus}7$}/white, rb2/10/black, rb6/14/black}
+  \raiddisk{7.6}{Disk}{9}{pc/{$0{\oplus}1{\oplus}2{\oplus}3$}/white, rb7/7/black, rb3/11/black, rb7/15/black}
+\end{tikzpicture}
+\caption{RAID 5: the parity block of each stripe moves to a different disk (after slide 252).}
+\label{fig:raid5}
+\end{figure}
 
 \subsection{RAID 6: Striping with Double Distributed Parity}
 
-Similar to RAID 5, except that each parity group has \emph{two} parity blocks, $P$ and $Q$. $P$ is the XOR as before; $Q$ is computed by another method, chosen so that $P$ and $Q$ together can reconstruct any two missing blocks. RAID 6 has the same advantages as RAID 5 and better reliability: it can recover from two disk failures.
+Similar to RAID 5, except that each parity group has \emph{two} parity blocks, $P$ and $Q$ (\Cref{fig:raid6}). $P$ is the XOR as before; $Q$ is computed by another method, chosen so that $P$ and $Q$ together can reconstruct any two missing blocks. RAID 6 has the same advantages as RAID 5 and better reliability: it can recover from two disk failures.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+  \raidstrip{0.275}{16}
+  \raiddisk{0.0}{Disk}{9}{rb0/0/black, rb3/3/black, rb6/6/black, pc/P/white}
+  \raiddisk{1.9}{Disk}{9}{rb1/1/black, rb4/4/black, pc/P/white, qc/Q/white}
+  \raiddisk{3.8}{Disk}{9}{rb2/2/black, pc/P/white, qc/Q/white, rb1/9/black}
+  \raiddisk{5.7}{Disk}{9}{pc/P/white, qc/Q/white, rb7/7/black, rb2/10/black}
+  \raiddisk{7.6}{Disk}{9}{qc/Q/white, rb5/5/black, rb0/8/black, rb3/11/black}
+\end{tikzpicture}
+\caption{RAID 6: two parity blocks, $P$ and $Q$, per stripe (after slide 253).}
+\label{fig:raid6}
+\end{figure}
 
 \subsection{Summary}
 

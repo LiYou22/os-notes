@@ -1,6 +1,29 @@
 \section{File System Consistency and Recovery}
 \label{sec:recovery}
 
+% Slide colors for the crash and journal figures of this section; hdd is also
+% used by the RAID figures of the next section.
+\definecolor{kblue}{HTML}{66CCFF}   % kernel box
+\definecolor{lostc}{HTML}{CEAC9F}   % steps lost to a crash
+\definecolor{todoc}{HTML}{FFC26B}   % steps not carried out
+\definecolor{hddc}{HTML}{8E8E8E}    % disk icon
+\definecolor{navyc}{HTML}{2E3192}
+\tikzset{
+  % hdd={label}{x radius}{platters}{platter gap}; origin = centre of the top
+  pics/hdd/.style n args={4}{code={
+    \foreach \k in {#3,...,1}
+      \filldraw[fill=hddc, draw=white, line width=0.6pt] (0,{-\k*#4}) ellipse ({#2} and {0.3*#2});
+    \filldraw[fill=hddc, draw=white, line width=0.6pt] (0,0) ellipse ({#2} and {0.3*#2});
+    \node[text=white, font=\tiny, inner sep=0pt] at (0,0) {#1};
+  }},
+  rbox/.style={draw=sigc, fill=white, font=\scriptsize, align=center, inner sep=2pt},
+  kbox/.style={draw, fill=white, font=\scriptsize, align=left, inner sep=2pt},
+  sarr/.style={-{Stealth[length=1.1mm]}, thin},
+  darr/.style={-{Stealth[length=1.8mm]}, semithick},
+}
+% \st{text}: the slides' red strike-through
+\newcommand{\st}[1]{\sbox0{#1}\rlap{\hspace{-2pt}\color{sigc}\rule[0.6ex]{\dimexpr\wd0+4pt}{0.6pt}}\usebox0}
+
 \subsection{What a Crash Does}
 
 Creating a file is not one disk write but a sequence of them. When everything is normal, the system call carries out the following steps (\Cref{fig:createsteps}):
@@ -14,53 +37,227 @@ Creating a file is not one disk write but a sequence of them. When everything is
   \item write the data to the allocated blocks.
 \end{enumerate}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}[stp/.style={draw, fill=rowc, font=\scriptsize, minimum width=58mm, minimum height=5.5mm, inner sep=2pt},
-                    note/.style={font=\scriptsize, align=left, anchor=west}]
-  \foreach \t [count=\i] in {Read free-space management data from disk.,
-                            Update free-space management data on disk.,
-                            Read file allocation information from disk.,
-                            Update file allocation information on disk.,
-                            Read directory entry from disk.,
-                            Update directory entry on disk.,
-                            Write data to allocated blocks.} {
-    \node[stp] (s\i) at (0,-0.75*\i) {\i.\ \t};
-  }
-  \foreach \i [evaluate=\i as \j using int(\i+1)] in {1,...,6} \draw[-{Stealth[length=1.3mm]}] (s\i) -- (s\j);
-  \draw[sigc, thick, decorate, decoration={brace, amplitude=4pt}] (3.1,-1.2) -- (3.1,-1.8)
-    node[note, midway, xshift=4pt, text=black] {Crash after 1: no problem.};
-  \draw[sigc, thick, decorate, decoration={brace, amplitude=4pt}] (3.1,-1.95) -- (3.1,-3.3)
-    node[note, midway, xshift=4pt, text=black] {Crash after 2 or 3: free space is allocated to nothing.\\ \emph{Error 1}: the FS loses free space.};
-  \draw[sigc, thick, decorate, decoration={brace, amplitude=4pt}] (3.1,-3.45) -- (3.1,-4.8)
-    node[note, midway, xshift=4pt, text=black] {Crash after 4 or 5: allocated blocks are chained together\\ but belong to no file. \emph{Error 2}: free space lost too.};
-  \draw[sigc, thick, decorate, decoration={brace, amplitude=4pt}] (3.1,-4.95) -- (3.1,-5.6)
-    node[note, midway, xshift=4pt, text=black] {Crash after 6: the entry points to uninitialized data.\\ \emph{Error 3}: the content of the file is wrong.};
+\begin{tikzpicture}[stp/.style={fill=rowc, font=\scriptsize, align=center, inner sep=1.5pt}]
+  \foreach \t/\y [count=\i] in {{Read free space\\management data from disk.}/0,
+                                {Update free space\\management data in disk.}/-0.95,
+                                {Read file allocation\\information from disk.}/-1.9,
+                                {Update file allocation\\information and write it to disk.}/-2.85,
+                                {Read directory entry from disk.}/-3.65,
+                                {Update directory entry in disk.}/-4.3,
+                                {Write data to allocated blocks.}/-4.95}
+    \node[stp] (s\i) at (0,\y) {\t};
+  \foreach \i [evaluate=\i as \j using int(\i+1)] in {1,...,6} \draw[sarr] (s\i) -- (s\j);
+  \begin{scope}[on background layer]
+    \fill[freec] (-2.2,0.5) rectangle (2.2,-5.3);
+    \fill[kblue] (-5.4,0.65) rectangle (2.35,-5.45);
+  \end{scope}
+  \node[font=\scriptsize\bfseries, text=white, anchor=south west] at (-5.35,-5.4) {Kernel};
+  \node[draw=orange!80!black, fill=dirc, font=\scriptsize\bfseries, minimum width=17mm, minimum height=6.5mm] (sc) at (-3.8,-2.4) {System call};
+  \node[draw=jobB!60!orange, fill=jobB, rounded corners=2pt, font=\scriptsize\bfseries, minimum width=17mm, minimum height=6.5mm] (fc) at (-7.4,-2.4) {File creation};
+  \draw[{Stealth[length=1.8mm]}-{Stealth[length=1.8mm]}, semithick] (fc) -- (sc);
+  \pic at (4.3,-2.95) {hdd={\scriptsize Disk}{0.75}{7}{0.15}};
+  \draw[darr] (4.05,-2.6) -- (s1.east);
+  \draw[darr] (s2.east) -- (3.75,-2.65);
+  \draw[darr] (3.5,-2.85) -- (s3.east);
+  \draw[darr] (s4.east) -- (3.45,-3.1);
+  \draw[darr] (3.45,-3.35) -- (s5.east);
+  \draw[darr] (s6.east) -- (3.45,-3.6);
+  \draw[darr] (s7.east) -- (3.45,-3.85);
 \end{tikzpicture}
-\caption{The disk updates of a file creation, and the inconsistency left by a crash after each one (after slides 216--222).}
+\caption{When everything is normal: the system call for a file creation reads and updates the disk step by step (after slide 216).}
 \label{fig:createsteps}
 \end{figure}
 
-After the OS comes back, can you \emph{detect} these inconsistencies? Can you \emph{recover} from them? Sometimes you can detect an error but have no way to recover from it. The tools for file system checking and recovery are \code{fsck} on Linux and macOS, and \code{chkdsk} and \code{scandisk} on Windows.
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[cstp/.style={font=\tiny, align=center, inner sep=1.2pt}]
+  % \crashpanel{k}{y}: the steps of a file creation, crashed after step k (at height y)
+  \newcommand{\crashpanel}[2]{%
+    \foreach \t/\y [count=\i] in {{Read free space\\management data from disk.}/0,
+                                  {Update free space\\management data in disk.}/-0.62,
+                                  {Read file allocation\\information from disk.}/-1.24,
+                                  {Update file allocation\\information and write it to disk.}/-1.86,
+                                  {Read directory entry from disk.}/-2.42,
+                                  {Update directory entry in disk.}/-2.9,
+                                  {Write data to allocated blocks.}/-3.38} {
+      \ifnum\i>#1 \def\fc{todoc}\else\def\fc{rowc}\fi
+      \node[cstp, fill=\fc] (c\i) at (0,\y) {\t};
+    }
+    \foreach \i [evaluate=\i as \j using int(\i+1)] in {1,...,6} \draw[sarr] (c\i) -- (c\j);
+    \begin{scope}[on background layer]
+      \fill[freec] (-1.62,0.38) rectangle (1.62,#2);
+      \fill[lostc] (-1.62,#2) rectangle (1.62,-3.62);
+    \end{scope}
+    \draw[sigc, densely dotted, thick] (-1.75,#2) -- (1.65,#2);
+    \node[font=\tiny, text=sigc, align=center, anchor=east] at (-1.75,#2+0.07) {System\\crashed};
+    \pic at (2.3,-2.15) {hdd={Disk}{0.38}{6}{0.075}};
+    \draw[sarr, semithick] (2.25,-1.98) -- (c1.east);
+    \draw[sarr, semithick] (c2.east) -- (2.02,-2.0);
+    \draw[sarr, semithick] (1.88,-2.08) -- (c3.east);
+    \draw[sarr, semithick] (c4.east) -- (1.84,-2.2);
+    \draw[sarr, semithick] (1.84,-2.33) -- (c5.east);
+    \draw[sarr, semithick] (c6.east) -- (1.84,-2.46);
+    \draw[sarr, semithick] (c7.east) -- (1.84,-2.6);
+    \node[font=\scriptsize] at (-3.25,0.2) {What will happen?};
+  }
+  % (a) crash after step 1
+  \begin{scope}
+    \crashpanel{1}{-0.31}
+    \node[font=\small, anchor=east] at (-4.95,0.2) {(a)};
+    \node[font=\scriptsize] at (-3.25,-0.85) {No problem!};
+  \end{scope}
+  % (b) crash after step 3
+  \begin{scope}[xshift=8.2cm]
+    \crashpanel{3}{-1.55}
+    \node[font=\small, anchor=east] at (-4.95,0.2) {(b)};
+    \node[rbox] at (-3.25,-0.4) {Free space is allocated\\to nothing!};
+    \node[font=\scriptsize] at (-3.5,-2.95) {Implications:};
+    \node[rbox] at (-3.5,-3.37) {The FS loses free space!};
+  \end{scope}
+  % (c) crash after step 5
+  \begin{scope}[yshift=-4.5cm]
+    \crashpanel{5}{-2.66}
+    \node[font=\small, anchor=east] at (-4.95,0.2) {(c)};
+    \node[rbox] at (-3.25,-0.4) {Free space is allocated\\to nothing!};
+    \node[rbox] at (-3.25,-1.4) {Allocated space are chained\\together now. But the space is\\not associated to any files.};
+    \node[font=\scriptsize] at (-3.5,-2.95) {Implications:};
+    \node[rbox] at (-3.5,-3.37) {The FS loses free space!};
+  \end{scope}
+  % (d) crash after step 6
+  \begin{scope}[xshift=8.2cm, yshift=-4.5cm]
+    \crashpanel{6}{-3.14}
+    \node[font=\small, anchor=east] at (-4.95,0.2) {(d)};
+    \node[rbox] at (-3.25,-0.45) {The directory entry is pointing\\to uninitialized data!};
+    \node[rbox] at (-3.25,-1.4) {The content of the\\file is wrong!};
+  \end{scope}
+\end{tikzpicture}
+\caption{If something goes wrong: a crash (a) after step 1, (b) after step 2 or 3, (c) after step 4 or 5, (d) after step 6. Done steps are yellow, lost ones orange (after slides 217--222).}
+\label{fig:crash}
+\end{figure}
+
+After the OS comes back, can you \emph{detect} these inconsistencies (\Cref{fig:crash})? Can you \emph{recover} from them? Sometimes you can detect an error but have no way to recover from it. The tools for file system checking and recovery are \code{fsck} on Linux and macOS, and \code{chkdsk} and \code{scandisk} on Windows.
 
 \subsection{Error 1: Free Space Allocated to Nothing}
 
-To detect it, check the free-space management data against the entire set of allocated blocks. \code{fsck} can do this for ext2/3/4:
+To detect it, check the free-space management data against the entire set of allocated blocks. \code{fsck} can do this for ext2/3/4 (\Cref{fig:fsck1}):
 \begin{enumerate}
   \item construct a bitmap of the allocated blocks from all the inodes in the inode table, by following every block pointer;
   \item compare it with the free-space bitmap.
 \end{enumerate}
 A block that is marked in use in the free-space bitmap but belongs to no inode is a \emph{missing block}. To recover, reset its bit in the free-space bitmap, and reset fields in the superblock if necessary (the count of free blocks).
 
+% \fslayout: the slides' ext disk layout, bottom-left corner at the origin
+\newcommand{\fslayout}{%
+  \draw[fill=bootc] (0,0) rectangle (1.4,1.2);
+  \node[font=\footnotesize\bfseries, text=white, align=center] at (0.7,0.6) {Super-\\block};
+  \draw[fill=rowc] (1.4,0) rectangle (2.8,1.2);
+  \node[font=\footnotesize, align=center, inner sep=0pt] at (2.1,0.6) {Free\\space\\bitmap};
+  \draw[fill=metac] (2.8,0) rectangle (5.0,1.2);
+  \node[font=\footnotesize] at (3.9,0.6) {Inode table};
+  \draw[fill=rowc] (5.0,0) rectangle (6.0,1.2);
+  \node[font=\footnotesize, align=center] at (5.5,0.6) {Root\\dir};
+  \foreach \c [count=\i from 0] in {dirc,freec,freec,usedc,usedc,usedc,freec,dirc,
+                                    freec,freec,usedc,freec,freec,usedc,usedc,usedc}
+    \draw[fill=\c] (6.0+0.2*\i,0) rectangle ++(0.2,1.2);}
+% \bittable{x}{y}{header fill}{header text style}{title}{cells}: a two-row
+% bitmap table, top-left corner at (x,y)
+\newcommand{\bittable}[6]{%
+  \begin{scope}[shift={(#1,#2)}]
+    \draw[fill=#3] (0,0) rectangle (1.25,-0.4);
+    \node[font=\scriptsize\bfseries, #4] at (0.625,-0.2) {#5};
+    \draw[fill=#3] (0,-0.4) rectangle (1.25,-0.8);
+    \node[font=\scriptsize, #4] at (0.625,-0.6) {Bit};
+    \foreach \h/\b [count=\i] in {#6} {
+      \draw[fill=#3] (0.65*\i+0.6,0) rectangle ++(0.65,-0.4);
+      \node[font=\scriptsize, #4] at (0.65*\i+0.925,-0.2) {\h};
+      \draw[fill=rowc] (0.65*\i+0.6,-0.4) rectangle ++(0.65,-0.4);
+      \node[font=\scriptsize] at (0.65*\i+0.925,-0.6) {\b};
+    }
+    \draw[thick] (0,0) rectangle (4.5,-0.8);
+  \end{scope}}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+  % (a)
+  \node[font=\small, anchor=east] at (-0.9,3.4) {(a)};
+  \fslayout
+  \bittable{2.2}{3.4}{bootc}{text=white}{Block \#}{0/0,1/1,\dots/\dots,199/0,200/1}
+  \draw[sigc, thick] (3.37,3.5) rectangle (4.18,2.5);
+  \draw[sigc, thick] (5.97,3.5) rectangle (6.78,2.5);
+  \node[font=\scriptsize, anchor=west] (fb) at (4.4,4.05) {Free block};
+  \draw[darr] (fb.west) -- (4.05,3.6);
+  \node[font=\scriptsize, anchor=west] (bu) at (7.0,4.05) {Block in use};
+  \draw[darr] (bu.west) -- (6.65,3.6);
+  \draw[{Stealth[length=1.8mm]}-{Stealth[length=1.8mm]}, semithick] (2.1,1.3) -- (2.65,2.52);
+  \node[font=\scriptsize, align=left, anchor=east] at (2.2,1.85) {\textbf{Step 2:}\\Compare the two bitmaps.};
+  \draw[darr] (4.3,1.3) -- (4.3,2.52);
+  \node[font=\scriptsize, align=left, anchor=west] at (4.45,1.85) {\textbf{Step 1:}\\Construct the bitmap of allocated blocks from all inodes in the table.};
+  % (b)
+  \begin{scope}[yshift=-1.9cm]
+    \node[font=\small, anchor=east] at (-0.9,0.75) {(b)};
+    \foreach \u/\f [count=\i from 0] in {1/0,1/0,0/0,1/0,0/1,1/0,1/0,1/0,1/0,0/1,0/1,1/0,1/0,1/0,0/1,0/1} {
+      \node[font=\scriptsize] at (1.6+0.36*\i,0.75) {\i};
+      \draw (1.42+0.36*\i,0.2) rectangle ++(0.36,0.4);
+      \node[font=\scriptsize] at (1.6+0.36*\i,0.4) {\u};
+      \draw (1.42+0.36*\i,-0.5) rectangle ++(0.36,0.4);
+      \node[font=\scriptsize] at (1.6+0.36*\i,-0.3) {\f};
+    }
+    \node[font=\scriptsize, anchor=west] at (7.2,0.4) {Blocks in use};
+    \node[font=\scriptsize, anchor=west] at (7.2,-0.3) {Free blocks};
+    \draw[sigc, thick] (2.12,0.65) rectangle (2.56,-0.58);
+    \draw[-{Stealth[length=1.8mm]}, semithick, sigc] (2.34,-1.1) -- (2.34,-0.66);
+    \node[font=\scriptsize, text=sigc] at (2.34,-1.3) {A missing block detected.};
+  \end{scope}
+\end{tikzpicture}
+\caption{Error 1: (a) \code{fsck} builds a bitmap of the allocated blocks from the inode table and compares it with the free-space bitmap; (b) a missing block is detected (after slides 225--226).}
+\label{fig:fsck1}
+\end{figure}
+
 \subsection{Error 2: Allocated Blocks That Belong to No File}
 
-Here an inode has been written and points to blocks, but no directory entry refers to the inode, so checking the inode table is not enough: the whole directory tree must be checked.
+Here an inode has been written and points to blocks, but no directory entry refers to the inode, so checking the inode table is not enough: the whole directory tree must be checked (\Cref{fig:fsck2}).
 \begin{enumerate}
   \item Traverse the entire directory tree, starting from the root.
   \item Locate the allocated inodes from the inode number in every directory entry, and record them in an inode allocation table.
   \item Construct the block allocation bitmap from the inodes discovered this way.
   \item (a) Compare this block bitmap with the free-space bitmap; (b) compare the inode allocation table built from the tree with the inode bitmap.
 \end{enumerate}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+  \fslayout
+  \bittable{-0.5}{5.4}{bootc}{text=white}{Block \#}{0/0,1/1,\dots/\dots,199/0,200/1}
+  \bittable{1.4}{3.9}{metac}{text=black}{Inode \#}{0/0,1/1,\dots/\dots,49/0,50/1}
+  \node[font=\scriptsize, align=left, anchor=north west] at (4.3,5.5) {\textbf{Step 3:}\\\textcolor{sigc}{Construct} the block allocation bitmap based on the discovered inodes.};
+  \draw[darr] (4.95,4.0) -- (4.2,4.55);
+  % the directory tree
+  \begin{scope}[xshift=0.9cm]
+  \fill[freec] plot[smooth cycle, tension=0.8] coordinates {(8.0,2.3) (8.6,3.4) (9.9,3.45) (10.55,2.4) (10.2,1.2) (9.3,1.1) (8.2,1.6)};
+  \node[draw, fill=rowc, minimum size=3.6mm, inner sep=0pt] (r) at (9.2,3.05) {};
+  \node[draw, fill=usedc, circle, minimum size=3.6mm, inner sep=0pt] (g) at (8.5,2.4) {};
+  \node[draw, fill=dirc, minimum size=3.6mm, inner sep=0pt] (o1) at (9.2,2.3) {};
+  \node[draw, fill=dirc, minimum size=3.6mm, inner sep=0pt] (o2) at (9.7,1.5) {};
+  \draw[darr] (r) -- (g); \draw[darr] (r) -- (o1); \draw[darr] (o1) -- (o2);
+  \node[font=\scriptsize\bfseries] at (9.75,2.8) {\dots};
+  \node[font=\scriptsize\bfseries] at (8.75,1.95) {\dots};
+  \node[font=\scriptsize, align=left, anchor=north west] at (7.9,4.25) {\textbf{Step1:}\\\textcolor{sigc}{Traverse} the entire directory tree.};
+  \end{scope}
+  \draw[darr] (9.05,3.2) -- (6.0,3.2);
+  \node[font=\scriptsize, align=left, anchor=north west] at (6.0,2.95) {\textbf{Step 2:}\\\textcolor{sigc}{Locate} the allocated\\inodes by referring to\\the inode number of\\every directory entry.};
+  \draw[{Stealth[length=1.8mm]}-{Stealth[length=1.8mm]}, semithick] (3.3,3.0) -- (3.3,1.3);
+  \node[font=\scriptsize, align=left, anchor=north west] at (3.45,2.75) {\textbf{Step 4b:}\\\textcolor{sigc}{Compare} the two\\inode allocation\\tables.};
+  \draw[{Stealth[length=1.8mm]}-{Stealth[length=1.8mm]}, semithick] (0.1,4.5) .. controls (0.0,3.0) and (2.0,2.6) .. (2.25,1.3);
+  \node[font=\scriptsize, align=left, anchor=north west] at (-2.4,2.7) {\textbf{Step 4a:}\\\textcolor{sigc}{Compare} the block allocation\\bitmap to the free space bitmap.};
+  \draw[densely dotted, thick, -{Stealth[length=1.5mm]}] (5.8,0.1) .. controls (6.4,-0.5) and (10.9,-0.2) .. (10.85,1.12);
+\end{tikzpicture}
+\caption{Error 2: \code{fsck} traverses the directory tree, builds the inode and block allocation bitmaps from what it finds, and compares them with the inode table and the free-space bitmap (after slide 228).}
+\label{fig:fsck2}
+\end{figure}
+
 This discovers missing blocks, as before, and \emph{dangling inodes}: inodes that are allocated but referred to by no directory entry. To recover, reset the free-space bitmap and the superblock fields as before, and delete the dangling inodes, much as a garbage collector frees unreachable objects. (In practice, \code{e2fsck} offers to reconnect such inodes into the directory \code{/lost+found} instead, so that their data can be inspected.)
 
 \subsection{Error 3: Journaling}
@@ -81,40 +278,170 @@ The third error cannot be detected this way: every structure is consistent with 
 \end{example}
 
 \begin{definition}[Journal and Transaction]
-  A \emph{journal} is the log book of a file system, kept inside the file system, i.e., on the disk. A set of file system operations is grouped into an \emph{atomic transaction}: either all of its operations complete successfully, or none does (recall test-and-set in \Cref{sec:cs}). A transaction records all the changes that will be made to the FS, and every transaction is written to the journal.
+  A \emph{journal} is the log book of a file system, kept inside the file system, i.e., on the disk (\Cref{fig:journallayout}). A set of file system operations is grouped into an \emph{atomic transaction}: either all of its operations complete successfully, or none does (recall test-and-set in \Cref{sec:cs}). A transaction records all the changes that will be made to the FS, and every transaction is written to the journal.
 \end{definition}
+
+% \fsbar{data-blocks fill}: FS data | Journal | Data blocks, bottom-left at the origin
+\newcommand{\fsbar}[1]{%
+  \draw[fill=bootc] (0,0) rectangle (1.3,0.65); \node[font=\scriptsize, text=white] at (0.65,0.325) {FS data};
+  \draw[fill=metac] (1.3,0) rectangle (2.6,0.65); \node[font=\scriptsize] at (1.95,0.325) {Journal};
+  \draw[fill=#1] (2.6,0) rectangle (6.1,0.65); \node[font=\scriptsize] at (4.35,0.325) {Data blocks};}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+  \fsbar{rowc}
+\end{tikzpicture}
+\caption{The journal is kept on the disk, inside the file system (after slide 235).}
+\label{fig:journallayout}
+\end{figure}
 
 \begin{keypoint}[Write-Ahead Principle]
   All changes to the file system are written to the journal first: the changes to the metadata (inodes, directory entries, \dots) and the file content. Then the FS-related system call returns to the user process. Meanwhile, the entries in the journal are \emph{replayed}: the kernel carries out the recorded actions on the actual file system, marks each change as done when it is committed, and removes the transaction from the journal when all of its changes are committed.
 \end{keypoint}
 
-\begin{figure}[htbp]
-\centering
-\begin{tikzpicture}[stp/.style={draw, fill=rowc, font=\scriptsize, minimum width=52mm, minimum height=5.5mm, inner sep=2pt}]
-  \foreach \t [count=\i] in {Update free-space management data on disk.,
-                            Update file allocation information on disk.,
-                            Update directory entry on disk.,
-                            Write data to allocated blocks.} {
-    \node[stp] (s\i) at (0,-0.8*\i) {\t};
-  }
-  \foreach \i [evaluate=\i as \j using int(\i+1)] in {1,2,3} \draw[-{Stealth[length=1.3mm]}] (s\i) -- (s\j);
+% \txnbox: the frame of a transaction inside the journal around steps at the origin
+\newcommand{\txnbox}{%
   \begin{scope}[on background layer]
-    \node[fit=(s1)(s4), fill=freec, inner sep=5pt] (tr) {};
-    \node[fit=(tr), fill=metac, inner sep=6pt, label={[font=\scriptsize]below:a transaction inside the journal}] {};
+    \fill[metac] (-2.4,0.8) rectangle (2.4,-3.45);
+    \fill[freec] (-2.1,0.55) rectangle (2.1,-2.75);
   \end{scope}
-  \draw[sigc, thick, {Stealth[length=2mm]}-] (s1.east) -- ++(0.9,0) node[right, font=\scriptsize, draw=sigc, fill=white, inner sep=2pt] {current task pointer};
-  \node[draw, fill=greybg, cylinder, shape border rotate=90, aspect=0.25, minimum width=13mm, minimum height=11mm, font=\scriptsize] (disk) at (6.3,-3.0) {Disk};
-  \draw[arr] (s1.east) ++(0,-0.1) to[out=-10, in=150] node[above right, font=\scriptsize, pos=0.55] {commit changes} (disk.north west);
-  \node[font=\scriptsize, align=left, anchor=west] at (3.4,-4.2) {Metadata updates (1--3) and the\\ file content update (4).};
+  \node[font=\scriptsize] at (0,-3.2) {A transaction inside the journal};}
+% \txn{k}: a transaction inside the journal, steps j1..j4, the first k struck through
+\newcommand{\txn}[1]{%
+  \begin{scope}[every node/.style={fill=rowc, font=\scriptsize, align=center, inner sep=1.5pt}]
+    \node (j1) at (0,0) {\ifnum#1>0 \st{Update free space}\\\st{management data in disk.}\else Update free space\\management data in disk.\fi};
+    \node (j2) at (0,-0.9) {\ifnum#1>1 \st{Update file allocation}\\\st{information and write it to disk.}\else Update file allocation\\information and write it to disk.\fi};
+    \node (j3) at (0,-1.65) {\ifnum#1>2 \st{Update directory entry in disk.}\else Update directory entry in disk.\fi};
+    \node (j4) at (0,-2.3) {Write data to allocated blocks.};
+  \end{scope}
+  \foreach \i [evaluate=\i as \j using int(\i+1)] in {1,2,3} \draw[sarr] (j\i) -- (j\j);
+  \txnbox}
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}
+  % (a)
+  \node[font=\small, anchor=east] at (-5.3,0.4) {(a)};
+  \txn{0}
+  \draw[sigc, thick] (-1.97,0.43) rectangle (1.97,-1.9);
+  \draw[navyc, thick] (-1.97,-2.06) rectangle (1.97,-2.54);
+  \node[draw=jobB!60!orange, fill=jobB, rounded corners=2pt, font=\scriptsize\bfseries, minimum width=17mm, minimum height=6.5mm] (fc) at (-3.9,0.15) {File creation};
+  \draw[darr] (fc.east) -- (-2.45,0.15);
+  \node[font=\scriptsize, anchor=east] (mu) at (-2.75,-0.95) {Metadata update};
+  \draw[darr] (mu.east) -- (-1.97,-0.95);
+  \node[font=\scriptsize, anchor=east] (cu) at (-2.75,-2.3) {File content update};
+  \draw[darr] (cu.east) -- (-1.97,-2.3);
+  \node[rbox, anchor=west] at (2.6,-0.9) {The journal stores\\the \textcolor{sigc}{update} actions.};
+  % (b)
+  \begin{scope}[yshift=-4.6cm]
+    \node[font=\small, anchor=east] at (-5.3,0.4) {(b)};
+    \txn{0}
+    \node[rbox, anchor=west] (ptr) at (2.6,0.15) {Current task pointer};
+    \draw[darr, sigc] (ptr.west) -- (j1.east |- ptr.west);
+    \pic at (5.3,-2.0) {hdd={\scriptsize Disk}{0.55}{6}{0.12}};
+    \draw[darr] (j1.south east) .. controls (2.6,-0.3) and (2.2,-0.75) .. (3.2,-0.85) .. controls (4.2,-0.95) and (4.0,-1.9) .. (4.65,-1.9);
+    \node[font=\scriptsize] at (3.6,-0.55) {Commit changes};
+    \node[kbox, anchor=west] at (4.75,-0.55) {The kernel updates the actual file system\\according to the actions written in the journal.};
+  \end{scope}
+  % (c)
+  \begin{scope}[yshift=-9.2cm]
+    \node[font=\small, anchor=east] at (-5.3,0.4) {(c)};
+    \txn{3}
+    \node[rbox, anchor=west] (ptr) at (2.6,-2.3) {Current task pointer};
+    \draw[darr, sigc] (ptr.west) -- (j4.east);
+    \pic at (6.05,-2.2) {hdd={\scriptsize Disk}{0.55}{6}{0.12}};
+    \draw[darr] ([xshift=6mm]j4.south) .. controls ([xshift=6mm, yshift=-5mm]j4.south) and (2.8,-3.0) .. (5.45,-2.8);
+    \node[font=\scriptsize] at (4.0,-3.22) {Commit changes};
+    \node[kbox, anchor=north west] at (4.3,0.4) {When a change is \textcolor{sigc}{committed}, they will be\\marked as done.\\[4pt]When all changes are committed, the\\transaction in the journal will be removed.};
+  \end{scope}
 \end{tikzpicture}
-\caption{A file creation as one transaction in the journal. The kernel commits its actions to the actual file system one by one, then removes the transaction (after slides 237--239).}
+\caption{A file creation as one transaction in the journal: (a) the journal stores the update actions; (b), (c) the kernel commits them to the actual file system one by one (after slides 237--239).}
 \label{fig:journal}
 \end{figure}
 
 \subsubsection{Recovery with a journal}
-The journal is extremely useful when the system crashes. After a crash, the file system should recover itself, and with the journal, recovery means \emph{replaying the uncommitted transactions}. The recovery tool finds each outstanding transaction in the journal and replays its uncommitted operations; updates that were finished before the crash need no replay.
+The journal is extremely useful when the system crashes. After a crash, the file system should recover itself, and with the journal, recovery means \emph{replaying the uncommitted transactions} (\Cref{fig:jreplay}). The recovery tool finds each outstanding transaction in the journal and replays its uncommitted operations; updates that were finished before the crash need no replay.
 
-What if the crash happens while the system is writing the journal itself? Then, during recovery, the transaction is found to be \emph{incomplete}: its last operation was not fully recorded, so the transaction cannot be completed. Since a transaction is atomic, the operations of the incomplete transaction that were already carried out (if any) are \emph{rolled back}, and the transaction is removed. Either way, after recovery the FS is in a state where each transaction happened completely or not at all.
+% \jzoom{done}{incomplete}: the journal of \fsbar, zoomed in above it; three
+% entries ending at e1..e3, the first `done' struck through, e3 cut short if
+% incomplete = 1
+\newcommand{\jzoom}[2]{%
+  \fill[freec] (1.4,1.55) rectangle (2.5,2.65);
+  \foreach \y [count=\i] in {2.4,2.1,1.8} {
+    \def\w{0.8}
+    \ifnum\i=3 \ifnum#2=1 \def\w{0.45}\fi\fi
+    \fill[rowc] (1.55,\y-0.08) rectangle ++(\w,0.16);
+    \coordinate (e\i) at (1.55+\w,\y);
+    \ifnum\i>#1\else \draw[sigc, thick] (1.55,\y) -- (2.35,\y);\fi
+  }
+  \draw[densely dotted] (1.4,1.55) -- (1.3,0.65) (2.5,1.55) -- (2.6,0.65);}
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}
+  % (a)
+  \node[font=\small, anchor=east] at (-0.3,2.4) {(a)};
+  \fsbar{white}
+  \jzoom{2}{0}
+  \node[font=\scriptsize, anchor=west] (nr) at (2.85,2.85) {Updates finished before the system crash. No need to replay.};
+  \draw[darr] (nr.west) -- (2.38,2.43);
+  \draw[darr] (nr.west) -- (2.38,2.13);
+  \draw[darr] (2.38,1.8) .. controls (3.3,1.95) and (3.6,1.6) .. (4.4,1.75) .. controls (5.4,1.95) and (5.5,1.3) .. (5.3,0.5);
+  \node[font=\scriptsize, anchor=west] at (5.65,1.4) {Replay this update.};
+  % (b)
+  \begin{scope}[xshift=2.35cm, yshift=-1.5cm]
+    \node[font=\small, anchor=east] at (-2.65,0.4) {(b)};
+    \txn{3}
+    \draw[sigc, densely dotted, thick] (-2.1,-1.98) -- (2.15,-1.98);
+    \node[callout, anchor=west] (pc) at (2.7,-1.5) {System previously crashed.};
+    \draw (pc.south west) ++(0.25,0) -- (2.15,-1.96);
+    \node[rbox, text=sigc, anchor=west] (rp) at (2.7,-2.3) {Replay this event.};
+    \draw[darr, sigc] (rp.west) -- (j4.east);
+    \pic at (6.3,-2.3) {hdd={\scriptsize Disk}{0.55}{6}{0.12}};
+    \draw[darr, sigc] ([xshift=6mm]j4.south) .. controls ([xshift=6mm, yshift=-5mm]j4.south) and (2.8,-3.0) .. (5.7,-2.85);
+    \node[font=\scriptsize, text=sigc] at (4.1,-3.22) {Reflect changes};
+  \end{scope}
+\end{tikzpicture}
+\caption{Recovery with a journal: (a) only the updates not finished before the crash are replayed; (b) the recovery tool finds an outstanding transaction and replays its uncommitted operation (after slides 240--241).}
+\label{fig:jreplay}
+\end{figure}
+
+What if the crash happens while the system is writing the journal itself? Then, during recovery, the transaction is found to be \emph{incomplete}: its last operation was not fully recorded, so the transaction cannot be completed. Since a transaction is atomic, the operations of the incomplete transaction that were already carried out (if any) are \emph{rolled back} (\Cref{fig:jundo}), and the transaction is removed. Either way, after recovery the FS is in a state where each transaction happened completely or not at all.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+  % (a)
+  \node[font=\small, anchor=east] at (-0.3,2.4) {(a)};
+  \fsbar{white}
+  \jzoom{1}{1}
+  \node[font=\scriptsize, anchor=west] (ie) at (2.85,1.85) {An incomplete journal entry.};
+  \draw[darr] (ie.west) -- (e3);
+  % (b)
+  \begin{scope}[xshift=2.35cm, yshift=-1.5cm]
+    \node[font=\small, anchor=east] at (-2.65,0.4) {(b)};
+    \begin{scope}[every node/.style={fill=rowc, font=\scriptsize, align=center, inner sep=1.5pt}]
+      \node (j1) at (0,0) {\st{Update free space}\\\st{management data in disk.}};
+      \node (j2) at (0,-0.9) {\st{Update file allocation}\\\st{information and write it to disk.}};
+      \node (j3) at (0,-1.65) {\st{Update directory entry in disk.}};
+      \node[anchor=west] (j4) at (j2.west |- 0,-2.3) {Write data to al};
+    \end{scope}
+    \draw[sarr] (j1) -- (j2); \draw[sarr] (j2) -- (j3); \draw[sarr] (j3.south) -- (j3.south |- j4.north);
+    \txnbox
+    \draw[sigc, densely dotted, thick] (-2.1,-1.98) -- (2.1,-1.98);
+    \node[callout, anchor=west] (io) at (0.3,-2.75) {An incomplete operation.};
+    \draw (io.north west) ++(0.3,0) -- ([xshift=-2mm]j4.south east);
+    \pic at (6.3,-1.6) {hdd={\scriptsize Disk}{0.55}{6}{0.12}};
+    \draw[darr] (j1.east) -- (5.65,-1.4);
+    \draw[darr] (j2.east) -- (5.65,-1.6);
+    \draw[darr] (j3.east) -- (5.65,-1.8);
+    \node[rbox, text=sigc] at (3.6,-1.25) {Undo the changes.};
+  \end{scope}
+\end{tikzpicture}
+\caption{An incomplete transaction: (a) the crash happened while the journal entry was being written; (b) its finished operations are undone (after slides 242--243).}
+\label{fig:jundo}
+\end{figure}
 
 \subsection{Speed versus Reliability}
 

@@ -1,6 +1,67 @@
 \section{FAT32 in Action}
 \label{sec:fat}
 
+% Figure helpers for this section. Coordinates follow the slides' 1000 x 562
+% frame (y grows downward), so every drive bar sits at x = 237..844, y = 400..468.
+\definecolor{fatresc}{HTML}{333399}
+\definecolor{lfnc}{HTML}{8C8545}
+\definecolor{lfnrowc}{HTML}{D3DAE8}
+\definecolor{lfnrowl}{HTML}{E9EDF4}
+\tikzset{
+  fatfig/.style={x=0.18mm, y=-0.18mm},
+  dimarr/.style={{Bar[width=2.4mm]Stealth[length=1.6mm]}-{Stealth[length=1.6mm]Bar[width=2.4mm]}},
+  hl/.style={draw=sigc, thick},
+}
+% \fatbar: the drive (boot sector, reserved sectors, FAT 1, FAT 2, 29 data clusters)
+\newcommand{\fatbar}{%
+  \draw[fill=freec] (481,400) rectangle (843.5,468);
+  \foreach \i in {1,...,28} \draw (481+12.5*\i,400) -- (481+12.5*\i,468);
+  \foreach \i in {1,2,11,25} \draw[fill=dirc] (468.5+12.5*\i,400) rectangle (481+12.5*\i,468);
+  \foreach \i in {7,8,9,14,17,18,19,20,21,22,27} \draw[fill=usedc] (468.5+12.5*\i,400) rectangle (481+12.5*\i,468);
+  \draw[fill=bootc] (237,400) rectangle (324.5,468);
+  \node[text=white, font=\scriptsize\bfseries, align=center] at (280.75,434) {Boot\\sector};
+  \draw[fill=fatresc] (324.5,400) rectangle (343,468);
+  \draw[fill=metac] (343,400) rectangle (412,468); \node[font=\scriptsize] at (377.5,434) {FAT 1};
+  \draw[fill=metac] (412,400) rectangle (481,468); \node[font=\scriptsize] at (446.5,434) {FAT 2};
+}
+\newcommand{\cdrive}{\node[font=\scriptsize\bfseries, anchor=east] at (231,434) {C: drive};}
+% \fatcol{left x}{top y}{width}{values}: a FAT excerpt, rows indexed 2, ..., 32, 33, ...;
+% value cells are named fc1, fc2, ..., index labels fi1, fi2, ...
+\newcommand{\fatcol}[4]{%
+  \foreach \v [count=\i] in {#4} {
+    \draw[fill=metac] (#1,#2+25*\i-25) rectangle (#1+#3,#2+25*\i);
+    \node[font=\scriptsize] (fc\i) at (#1+#3/2,#2+25*\i-12.5) {\v};
+    \node[font=\scriptsize, anchor=east] (fi\i) at (#1-8,#2+25*\i-12.5)
+      {\ifcase\i\or 2\or\or 32\or 33\or 34\or 35\fi};
+  }}
+% \fatent{x0}{x1}{x2}{x3}{top y}{filename}{cluster}: a directory entry with column titles
+\newcommand{\fatent}[7]{%
+  \node[font=\tiny, anchor=south] at ({(#1+#2)/2},#5-3) {Filename};
+  \node[font=\tiny, anchor=south] at ({(#2+#3)/2},#5-3) {Attributes};
+  \node[font=\tiny, anchor=south] at ({(#3+#4)/2},#5-3) {Cluster \#};
+  \draw[fill=rowc] (#1,#5) rectangle (#4,#5+37);
+  \draw (#2,#5) -- (#2,#5+37) (#3,#5) -- (#3,#5+37);
+  \node[font=\scriptsize] (en) at ({(#1+#2)/2},#5+18.5) {#6};
+  \node[font=\scriptsize] at ({(#2+#3)/2},#5+18.5) {\dots\dots};
+  \node[font=\small] (ec) at ({(#3+#4)/2},#5+18.5) {#7};
+}
+% \fsinfo{left x}{top y}{header width}{free}{next}: the FSINFO hints; value cells fs1, fs2
+\newcommand{\fsinfo}[5]{%
+  \foreach \h/\v [count=\i] in {\# of free clusters/#4, Next free cluster/#5} {
+    \draw[fill=bootc] (#1,#2+25*\i-25) rectangle (#1+#3,#2+25*\i);
+    \node[font=\tiny\bfseries, text=white] at (#1+#3/2,#2+25*\i-12.5) {\h};
+    \draw[fill=rowc] (#1+#3,#2+25*\i-25) rectangle (#1+#3+50,#2+25*\i);
+    \node[font=\tiny] (fs\i) at (#1+#3+25,#2+25*\i-12.5) {\v};
+  }
+  \draw[very thick] (#1,#2) rectangle (#1+#3+50,#2+50);
+}
+% \fatblock{row node}{n}: the data block a FAT row points to
+\newcommand{\fatblock}[2]{%
+  \draw[-{Stealth[length=1.6mm]}] (675,0 |- #1) -- (727,0 |- #1);
+  \draw[fill=datac] ($(731,0 |- #1)+(0,-8)$) rectangle ($(763,0 |- #1)+(0,8)$);
+  \node[font=\scriptsize, anchor=west] at (772,0 |- #1) {Block #2};
+}
+
 \subsection{Facts About FAT32}
 
 \begin{itemize}
@@ -30,35 +91,34 @@ Data area starts at byte 1049600 (sector 2050)
 \end{lstlisting}
 This determines the whole layout (\Cref{fig:fatlayout}). The first 32 sectors are the \emph{reserved area}, starting with the boot sector; the first FAT begins at sector 32 (byte $32 \times 512 = 16384$). Two FATs of 1009 sectors each follow, and the data area starts at sector $32 + 1009 + 1009 = 2050$. In this example a cluster is one sector, 512 bytes. Believe it or not, Microsoft named the first data cluster \emph{cluster 2}: no cluster has the address 0 or 1. The root directory starts at cluster 2.
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}[x=1cm]
-  \draw[fill=bootc] (0,0) rectangle (1.2,0.8); \node[font=\scriptsize, text=white, align=center] at (0.6,0.4) {Boot\\ sector};
-  \draw[fill=blue!60!black] (1.2,0) rectangle (1.45,0.8);
-  \draw[fill=metac] (1.45,0) rectangle (2.75,0.8); \node[font=\scriptsize] at (2.1,0.4) {FAT 1};
-  \draw[fill=metac] (2.75,0) rectangle (4.05,0.8); \node[font=\scriptsize] at (3.4,0.4) {FAT 2};
-  \foreach \k [count=\j] in {2,2,0,0,0,1,1,1,0,1,0,0,1,1,1,1,1,0,0,2,0,1,0,0,1,1,1,0,0,1} {
-    \pgfmathsetmacro{\xx}{4.05+0.22*(\j-1)}
-    \ifnum\k=1 \draw[fill=usedc] (\xx,0) rectangle ++(0.22,0.8);
-    \else\ifnum\k=2 \draw[fill=dirc] (\xx,0) rectangle ++(0.22,0.8);
-    \else \draw[fill=freec] (\xx,0) rectangle ++(0.22,0.8); \fi\fi
-  }
-  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (0,-0.25) -- node[below, font=\scriptsize] {32 sectors} (1.45,-0.25);
-  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (1.45,-0.25) -- node[below, font=\scriptsize] {1009} (2.75,-0.25);
-  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (2.75,-0.25) -- node[below, font=\scriptsize] {1009} (4.05,-0.25);
-  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (4.05,-0.25) -- node[below, font=\scriptsize] {data area, from sector 2050} (10.65,-0.25);
-  \draw[arr] (4.6,1.5) node[above, font=\scriptsize] {cluster 2 (root directory)} -- (4.16,0.8);
-  \draw[arr] (8.3,1.5) node[above, font=\scriptsize] {one cluster (512 bytes)} -- (7.8,0.8);
-  \node[font=\scriptsize, anchor=south west] at (1.2,0.85) {reserved area};
+\begin{tikzpicture}[fatfig]
+  \fatbar
+  \node[font=\scriptsize, align=left, anchor=east] (rb) at (205,352) {Reading the\\ boot sector.};
+  \draw[arr] (rb.east) .. controls (222,352) and (220,385) .. (237,398);
+  \node[draw, font=\scriptsize, align=left, text width=40mm, anchor=north west] at (262,262)
+    {\textbf{Believe it or not}\\[2pt] Microsoft named the first cluster as Cluster~2. There are no clusters that have an address 0 or 1.};
+  \node[font=\scriptsize, anchor=west] (c2) at (590,295) {Cluster 2};
+  \draw[arr] (c2.south west) .. controls (565,345) and (520,370) .. (488,399);
+  \node[font=\scriptsize, align=center] at (712,340) {One cluster\\ (512 bytes)};
+  \draw (706,365) -- (706,385) (718.5,365) -- (718.5,385);
+  \draw[-{Stealth[length=1.6mm]}] (681,375) -- (705,375);
+  \draw[-{Stealth[length=1.6mm]}] (744,375) -- (719.5,375);
+  \draw[dimarr] (237,482) -- node[below, font=\scriptsize] {32 sectors} (343,482);
+  \draw[dimarr] (343,482) -- node[below, font=\scriptsize] {1009} (412,482);
+  \draw[dimarr] (412,482) -- node[below, font=\scriptsize] {1009} (481,482);
+  \draw[dimarr] (481,482) -- node[below, font=\scriptsize] {Data area} (843.5,482);
 \end{tikzpicture}
 \caption{The FAT32 layout reported by \code{fsck.fat}, not drawn to scale (after slides 120--124).}
 \label{fig:fatlayout}
 \end{figure}
 
+\enlargethispage{\baselineskip}
 \subsection{Reading a Directory}
 
-To list \code{C:\textbackslash windows}:
-\begin{enumerate}
+To list \code{C:\textbackslash windows} (\Cref{fig:fatreaddir}):
+\begin{enumerate}[beginpenalty=10000]
   \item \emph{Locate the root directory.} Read the boot sector: the root directory is in cluster 2, which is located right behind the FATs.
   \item \emph{Find the directory entry} \code{windows} in cluster 2. Besides the regular entries, every directory has the entries \code{.} (this directory) and \code{..} (the parent directory); in the root, both refer to cluster 2.\footnote{This follows the slides. On a real FAT32 volume the root directory has no \code{.} and \code{..} entries at all, and the \code{..} entry of a directory whose parent is the root stores cluster 0 rather than 2.} The entry \code{windows} says that the directory starts at cluster 123.
   \item \emph{Follow cluster 123} and read all its directory entries: \code{.} (cluster 123), \code{..} (cluster 2), \code{explorer.exe} (cluster 32), \dots
@@ -71,6 +131,65 @@ c:\> dir c:\windows
 \end{lstlisting}
 \end{enumerate}
 
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[fatfig, x=0.158mm, y=-0.158mm]
+  % (a) step 1
+  \node[font=\small, anchor=east] at (120,434) {(a)};
+  \fatbar \cdrive
+  \node[font=\scriptsize, align=left, anchor=north west] at (352,282) {Read boot sector.\\ It says: the root directory is in Cluster 2.};
+  \draw[arr] (356,318) -- (300,398);
+  \node[font=\scriptsize, anchor=west] at (497,355) {Location of Cluster 2 is behind the FATs.};
+  \draw[arr] (507,368) -- (489,398);
+  % (b) step 2
+  \begin{scope}[shift={(0,252)}]
+    \node[font=\small, anchor=east] at (120,434) {(b)};
+    \fatbar \cdrive
+    \foreach \a/\b in {241/266, 266/297, 297/328, 328/360} \draw[fill=dirc] (300,\a) rectangle (418,\b);
+    \node[font=\scriptsize] at (359,375) {Cluster 2};
+    \draw[decorate, decoration={brace, amplitude=5pt, mirror}] (290,360) -- (290,241);
+    \node[font=\scriptsize, align=left, anchor=east] at (280,300) {Directory\\ entries};
+    \draw[arr] (512,266.5) -- (424,266.5);
+    \draw[arr] (512,334.5) -- (424,334.5);
+    \foreach \y in {283,300,317} \fill (468,\y) circle (1.2pt);
+    \foreach \t/\x in {Filename/571, Attributes/668, Cluster \#/752} \node[font=\tiny, anchor=south] at (\x,251) {\t};
+    \foreach \n/\c [count=\r] in {{\textbf{.} {\tiny(this dir)}}/2, {\textbf{..} {\tiny(parent dir)}}/2, \dots\dots/\dots\dots, windows/123} {
+      \pgfmathsetmacro{\yt}{ifthenelse(\r<4, 254+25*(\r-1), 322)}
+      \pgfmathsetmacro{\yb}{ifthenelse(\r==3, 322, \yt+25)}
+      \draw[fill=rowc] (518,\yt) rectangle (625,\yb) (625,\yt) rectangle (712,\yb) (712,\yt) rectangle (793,\yb);
+      \node[font=\scriptsize] (w\r) at (571.5,{(\yt+\yb)/2}) {\n};
+      \node[font=\scriptsize] at (668.5,{(\yt+\yb)/2}) {\dots\dots};
+      \node[font=\scriptsize] at (752.5,{(\yt+\yb)/2}) {\c};
+    }
+    \node[hl, fit=(w4), inner sep=1pt] {};
+    \draw[arr] (407,360) .. controls (425,392) and (480,372) .. (486.5,398);
+    \draw[arr, densely dotted, thin] (775,350) -- (786,398);
+  \end{scope}
+  % (c) step 3
+  \begin{scope}[shift={(0,504)}]
+    \node[font=\small, anchor=east] at (120,434) {(c)};
+    \fatbar \cdrive
+    \foreach \a/\b in {241/266, 266/297, 297/328, 328/360} \draw[fill=dirc] (300,\a) rectangle (418,\b);
+    \node[font=\scriptsize] at (359,375) {Cluster 123};
+    \draw[arr] (512,266.5) -- (424,266.5);
+    \draw[arr] (512,334.5) -- (424,334.5);
+    \foreach \y in {283,300,317} \fill (468,\y) circle (1.2pt);
+    \foreach \t/\x in {Filename/571, Attributes/668, Cluster \#/752} \node[font=\tiny, anchor=south] at (\x,251) {\t};
+    \foreach \n/\c [count=\r] in {{\textbf{.} {\tiny(this dir)}}/123, {\textbf{..} {\tiny(parent dir)}}/2, \dots\dots/\dots\dots, explorer.exe/32} {
+      \pgfmathsetmacro{\yt}{ifthenelse(\r<4, 254+25*(\r-1), 322)}
+      \pgfmathsetmacro{\yb}{ifthenelse(\r==3, 322, \yt+25)}
+      \draw[fill=rowc] (518,\yt) rectangle (625,\yb) (625,\yt) rectangle (712,\yb) (712,\yt) rectangle (793,\yb);
+      \node[font=\scriptsize] at (571.5,{(\yt+\yb)/2}) {\n};
+      \node[font=\scriptsize] at (668.5,{(\yt+\yb)/2}) {\dots\dots};
+      \node[font=\scriptsize] at (752.5,{(\yt+\yb)/2}) {\c};
+    }
+    \draw[arr, densely dotted, thin] (418,362) .. controls (435,380) and (770,365) .. (786.5,398);
+  \end{scope}
+\end{tikzpicture}
+\caption{Reading \code{C:\textbackslash windows}: (a) locate the root directory; (b) find \code{windows} in cluster 2; (c) follow cluster 123 (after slides 125--127).}
+\label{fig:fatreaddir}
+\end{figure}
+
 \subsection{The Directory Entry}
 
 A FAT directory entry is a 32-byte structure (\Cref{tab:fatdirent}). Since attributes live in the directory entry in FAT (\Cref{sec:fsmeta}), this structure is all the FS knows about a file.
@@ -78,20 +197,20 @@ A FAT directory entry is a 32-byte structure (\Cref{tab:fatdirent}). Since attri
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabular}{rl}
-  \toprule
-  Bytes & Value \\
-  \midrule
-  0 & first character of the filename (\code{0x00} or \code{0xE5} means unallocated) \\
-  1--10 & remaining $7 + 3$ characters of the filename and extension \\
-  11 & file attributes (e.g., read only, hidden) \\
-  12 & reserved \\
-  13--19 & creation and access time information \\
-  20--21 & high 2 bytes of the first cluster number ($0$ in FAT12 and FAT16) \\
-  22--25 & written time information \\
-  26--27 & low 2 bytes of the first cluster number \\
-  28--31 & file size \\
-  \bottomrule
+\begin{tabular}{|c|l|}
+  \hline
+  \rowcolor{bootc}\textcolor{white}{\bfseries Bytes} & \multicolumn{1}{c|}{\cellcolor{bootc}\textcolor{white}{\bfseries Value}} \\
+  \hline
+  \rowcolor{rowc} 0 & first character of the filename (\code{0x00} or \code{0xE5} means unallocated) \\ \hline
+  \rowcolor{rowc} 1--10 & remaining $7 + 3$ characters of the filename and extension \\ \hline
+  \rowcolor{rowc} 11 & file attributes (e.g., read only, hidden) \\ \hline
+  \rowcolor{rowc} 12 & reserved \\ \hline
+  \rowcolor{rowc} 13--19 & creation and access time information \\ \hline
+  \rowcolor{rowc} 20--21 & high 2 bytes of the first cluster number ($0$ in FAT12 and FAT16) \\ \hline
+  \rowcolor{rowc} 22--25 & written time information \\ \hline
+  \rowcolor{rowc} 26--27 & low 2 bytes of the first cluster number \\ \hline
+  \rowcolor{rowc} 28--31 & file size \\
+  \hline
 \end{tabular}
 \caption{The 32-byte FAT directory entry (after slide 128).}
 \label{tab:fatdirent}
@@ -99,7 +218,7 @@ A FAT directory entry is a 32-byte structure (\Cref{tab:fatdirent}). Since attri
 
 \begin{example}[The Entry of \code{explorer.exe}]
   \label{ex:fatdirent}
-  The entry of \code{explorer.exe}, byte by byte (\code{...} marks bytes not shown):
+  The entry of \code{explorer.exe}, byte by byte (\code{...} marks bytes not shown; \Cref{fig:fatdirbytes}(a)):
 \begin{lstlisting}[style=sh]
  0:  'e' 'x' 'p' 'l' 'o' 'r' 'e' 'r'
  8:  'e' 'x' 'e' ... ... ... ... ...
@@ -110,19 +229,126 @@ A FAT directory entry is a 32-byte structure (\Cref{tab:fatdirent}). Since attri
 \end{example}
 
 \begin{definition}[Endianness]
-  \emph{Endianness} is the order in which a machine (the entire computer architecture) stores the bytes of a multi-byte value. Take the 4-byte value $1234567890 = \code{0x499602D2}$. A \emph{little-endian} machine stores the least significant byte at the smallest address: \code{D2 02 96 49} (e.g., Intel). A \emph{big-endian} machine stores the most significant byte at the smallest address: \code{49 96 02 D2} (e.g., SPARC, and network protocols).
+  \emph{Endianness} is the order in which a machine (the entire computer architecture) stores the bytes of a multi-byte value (\Cref{fig:endian}). Take the 4-byte value $1234567890 = \code{0x499602D2}$. A \emph{little-endian} machine stores the least significant byte at the smallest address: \code{D2 02 96 49} (e.g., Intel). A \emph{big-endian} machine stores the most significant byte at the smallest address: \code{49 96 02 D2} (e.g., SPARC, and network protocols).
 \end{definition}
 
-FAT is little endian. Bytes 26--27, \code{20 00}, therefore mean $\code{0x0020} = 32$: the file starts at cluster 32. Likewise, the size field \code{00 C4 0F 00} means $\code{0x000FC400} = 1\,033\,216$ bytes, the size \code{dir} printed.
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[fatfig]
+  \draw[fill=freec, draw=none] (393,285) rectangle (610,390);
+  \node[font=\scriptsize, align=center] at (501.5,337.5) {\textbf{A 4-byte decimal value}\\ \texttt{1234567890}\\[3pt] \textbf{Hexadecimal value}\\ \texttt{499602D2}};
+  \draw[fill=metac, draw=none] (118,310) rectangle (342,365);
+  \node[font=\scriptsize, align=left, anchor=west] at (123,337.5) {\textbf{Little endian}\\[2pt] Small value in small address.};
+  \draw[fill=rowc, draw=none] (660,310) rectangle (883,365);
+  \node[font=\scriptsize, align=left, anchor=west] at (665,337.5) {\textbf{Big endian}\\[2pt] Small value in large address.};
+  \draw[-{Stealth[length=1.6mm]}, densely dotted] (396,385) -- (350,428);
+  \draw[-{Stealth[length=1.6mm]}, densely dotted] (600,378) -- (648,421);
+  \node[font=\scriptsize, anchor=east] at (340,407) {\emph{e.g.}, Intel};
+  \node[font=\scriptsize, anchor=west] at (655,407) {\emph{e.g.}, SPARC, network protocols};
+  \foreach \b/\x in {D2/247, 02/303, 96/359, 49/415} \node[draw, fill=metac, minimum width=7.2mm, minimum height=6mm, font=\small] at (\x,449) {\b};
+  \foreach \b/\x in {49/584, 96/640, 02/696, D2/752} \node[draw, fill=rowc, minimum width=7.2mm, minimum height=6mm, font=\small] at (\x,449) {\b};
+  \draw[-{Stealth[length=1.6mm]}] (245,482) -- (412,482);
+  \draw[-{Stealth[length=1.6mm]}] (590,482) -- (757,482);
+  \foreach \t/\x in {Small address/238, Large address/426, Small address/573, Large address/762}
+    \node[font=\scriptsize] at (\x,499) {\t};
+\end{tikzpicture}
+\caption{Little endian versus big endian for the 4-byte value $1234567890$ (after slide 131).}
+\label{fig:endian}
+\end{figure}
+
+FAT is little endian. Bytes 26--27, \code{20 00}, therefore mean $\code{0x0020} = 32$: the file starts at cluster 32 (\Cref{fig:fatdirbytes}(b)). Likewise, the size field \code{00 C4 0F 00} means $\code{0x000FC400} = 1\,033\,216$ bytes, the size \code{dir} printed.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[fatfig]
+  \foreach \p/\dx/\hi in {a/0/{1,2,3,4,5,6,7,8,9,10,11}, b/420/{21,22,27,28}} {
+    \begin{scope}[shift={(\dx,0)}]
+      \node[font=\small, anchor=east] at (500,225) {(\p)};
+      \fatent{537}{644}{731}{812}{206}{explorer.exe}{32}
+      \foreach \v [count=\k] in {e,x,p,l,o,r,e,r, e,x,e,\dots,\dots,\dots,\dots,\dots,
+                                  \dots,\dots,\dots,\dots,00,00,\dots,\dots, \dots,\dots,20,00,00,C4,0F,00} {
+        \pgfmathtruncatemacro{\row}{(\k-1)/8}
+        \pgfmathtruncatemacro{\col}{\k-1-8*\row}
+        \draw[fill=freec] (550+31.25*\col,277+25*\row) rectangle ++(31.25,25);
+      }
+      \foreach \k in \hi {
+        \pgfmathtruncatemacro{\row}{(\k-1)/8}
+        \pgfmathtruncatemacro{\col}{\k-1-8*\row}
+        \draw[fill=metac] (550+31.25*\col,277+25*\row) rectangle ++(31.25,25);
+      }
+      \foreach \v [count=\k] in {e,x,p,l,o,r,e,r, e,x,e,\dots,\dots,\dots,\dots,\dots,
+                                  \dots,\dots,\dots,\dots,00,00,\dots,\dots, \dots,\dots,20,00,00,C4,0F,00} {
+        \pgfmathtruncatemacro{\row}{(\k-1)/8}
+        \pgfmathtruncatemacro{\col}{\k-1-8*\row}
+        \node[font=\scriptsize] at (565.6+31.25*\col,289.5+25*\row) {\v};
+      }
+      \foreach \l/\r [count=\j from 0] in {0/7, 8/15, 16/23, 24/31} {
+        \node[font=\scriptsize, anchor=east] at (545,289.5+25*\j) {\l};
+        \node[font=\scriptsize, anchor=west] at (805,289.5+25*\j) {\r};
+      }
+    \end{scope}
+  }
+  \begin{scope}[shift={(420,0)}]
+    \foreach \bytes/\val/\name [count=\j from 0] in {{00,00,20,00}/8192/Big endian, {00,00,00,20}/32/Little endian} {
+      \foreach \b [count=\i from 0] in \bytes
+        \node[draw, fill=metac, minimum width=5.4mm, minimum height=4.5mm, font=\scriptsize] at (546+37.5*\i,412+32*\j) {\b};
+      \node[draw, fill=metac, minimum width=11.5mm, minimum height=4.5mm, font=\scriptsize, anchor=west] at (683,412+32*\j) {$=$ \val};
+      \node[font=\scriptsize, anchor=west] at (757,412+32*\j) {\name};
+    }
+  \end{scope}
+\end{tikzpicture}
+\caption{The entry of \code{explorer.exe}: (a) bytes 0--10 hold the name; (b) bytes 20--21 and 26--27 hold the first cluster number, read big endian and little endian (after slides 129--132).}
+\label{fig:fatdirbytes}
+\end{figure}
 
 \subsubsection{Long filenames}
-In the old days, Uncle Bill set the rule that every file follows the 8.3 naming scheme. He later removed the constraint with a backward-compatible but super ugly design: \emph{LFN} (long filename) entries.
+In the old days, Uncle Bill set the rule that every file follows the 8.3 naming scheme. He later removed the constraint with a backward-compatible but super ugly design: \emph{LFN} (long filename) entries (\Cref{fig:lfn}).
 \begin{itemize}
   \item The regular 8.3 entry is still there, so old systems keep working.
   \item In front of it come one or more LFN entries, each holding up to 13 characters of the long name in Unicode (2 bytes per character): 5 in bytes 1--10, 6 in bytes 14--25, and 2 in bytes 28--31.
   \item Byte 0 is a sequence number, and the sequence is upside down: LFN \#3, \#2, \#1, then the regular entry.
   \item Byte 11, the attribute byte, is always \code{0x0F} for an LFN entry, a combination that old systems ignore; byte 13 is a checksum of the 8.3 name, which ties the LFN entries to their regular entry.
 \end{itemize}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[fatfig, x=0.17mm, y=-0.17mm]
+  \node[font=\small, anchor=east] at (150,425) {(a)};
+  \draw[fill=lfnc] (182,344) rectangle (418,376);
+  \node[font=\scriptsize\bfseries, text=white] at (300,360) {Directory file};
+  \foreach \t/\c [count=\i] in {LFN \#3/lfnrowc, LFN \#2/lfnrowl, LFN \#1/lfnrowc, Regular entry/lfnrowl} {
+    \draw[fill=\c] (182,376+32.5*\i-32.5) rectangle (418,376+32.5*\i);
+    \node[font=\scriptsize\ttfamily] at (300,376+32.5*\i-16.25) {\t};
+  }
+  \draw[sigc, thick] (420,378) -- (428,378) -- (428,471) -- (420,471);
+  \draw[sigc, thick] (428,424.5) -- (436,424.5);
+  \draw[sigc, thick, rounded corners=6pt] (447,375) rectangle (818,462);
+  \fill[white] (449,413) -- (436,424.5) -- (449,436) -- cycle;
+  \draw[sigc, thick] (448,413) -- (436,424.5) -- (448,436);
+  \node[font=\scriptsize, align=left, text width=59mm, anchor=north west] at (452,380)
+    {Each LFN entry represents up to 13 characters in Unicode (2~bytes per character).\\[2pt] Yet, the sequence is upside-down!};
+  \draw[sigc, thick, rounded corners=6pt] (447,474) rectangle (818,505);
+  \fill[white] (449,481) -- (420,489.5) -- (449,498) -- cycle;
+  \draw[sigc, thick] (448,481) -- (420,489.5) -- (448,498);
+  \node[font=\scriptsize, anchor=west] at (452,489.5) {The regular directory entry is still there.};
+  \node[font=\small, anchor=east] at (150,630) {(b)};
+  \node[anchor=north west, inner sep=0pt] at (182,522) {\scriptsize
+    \begin{tabular}{|c|p{52mm}|}
+      \hline
+      \rowcolor{bootc}\textcolor{white}{\bfseries Bytes} & \multicolumn{1}{c|}{\cellcolor{bootc}\textcolor{white}{\bfseries Value (LFN directory entry)}} \\ \hline
+      \rowcolor{rowc} 0 & Sequence Number. \\ \hline
+      \rowcolor{metac} 1--10 & File name characters\newline (5 characters in Unicode). \\ \hline
+      \rowcolor{rowc} 11 & File attributes --- \textcolor{sigc}{always 0x0F for LFN}. \\ \hline
+      \rowcolor{rowc} 12 & Reserved. \\ \hline
+      \rowcolor{rowc} 13 & Checksum. \\ \hline
+      \rowcolor{metac} 14--25 & File name characters\newline (6 characters in Unicode). \\ \hline
+      \rowcolor{rowc} 26--27 & Reserved. \\ \hline
+      \rowcolor{metac} 28--31 & File name characters\newline (2 characters in Unicode). \\ \hline
+    \end{tabular}};
+\end{tikzpicture}
+\caption{Long filenames: (a) LFN entries in front of the regular entry; (b) the layout of an LFN entry (after slides 133--134).}
+\label{fig:lfn}
+\end{figure}
 
 \subsection{Reading a File}
 
@@ -131,6 +357,43 @@ In the old days, Uncle Bill set the rule that every file follows the 8.3 naming 
   \item Look up the next cluster in the FAT, and read that cluster: FAT entry 32 holds 33.
   \item Repeat until an EOF entry is found in the FAT: entry 33 holds EOF, so the file is clusters 32 and 33. A FAT32 entry is EOF if its value is at least \code{0x0FFFFFF8}.
 \end{enumerate}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[fatfig]
+  % (a) step 1
+  \node[font=\small, anchor=east] at (120,434) {(a)};
+  \fatbar \cdrive
+  \fatent{537}{644}{731}{812}{325}{explorer.exe}{32}
+  \draw[arr] (755,362) .. controls (745,392) and (565,370) .. (550,399);
+  % (b) step 2 and (c) step 3
+  \foreach \p/\dy in {b/290, c/580} {
+    \begin{scope}[shift={(0,\dy)}]
+      \node[font=\small, anchor=east] at (120,434) {(\p)};
+      \fatbar \cdrive
+      \draw[dimarr] (293,220) -- node[above, font=\scriptsize] {32 bits} (400,220);
+      \fatcol{293}{236}{107}{EOF, \dots, 33, EOF, 0}
+      \fatent{537}{644}{731}{812}{325}{explorer.exe}{32}
+      \draw[{Stealth[length=1.4mm]}-{Stealth[length=1.4mm]}, densely dotted] (357,366) -- (362,402);
+      \draw[{Stealth[length=1.4mm]}-{Stealth[length=1.4mm]}, densely dotted] (397,366) -- (430,402);
+    \end{scope}
+  }
+  \begin{scope}[shift={(0,290)}]
+    \draw[hl] (325,288) rectangle (369,310);
+    \draw[arr] (755,362) .. controls (745,400) and (500,400) .. (487,370) .. controls (478,330) and (450,300) .. (403,298.5);
+  \end{scope}
+  \begin{scope}[shift={(0,580)}]
+    \node[hl, fit=(fi4), inner sep=1pt] {};
+    \draw[arr] (755,362) .. controls (745,400) and (500,400) .. (487,370) .. controls (478,345) and (450,323) .. (403,323.5);
+    \node[callout, rounded corners=0pt, anchor=west] (eof) at (425,281) {EOF $\geqslant$ \texttt{0x0ffffff8}};
+    \fill[white] (437,290) -- (402,323) -- (455,290) -- cycle;
+    \draw (437,291) -- (402,323) -- (455,291);
+  \end{scope}
+\end{tikzpicture}
+\caption{Reading \code{explorer.exe}: (a) the first cluster comes from the directory entry; (b) the FAT gives the next cluster; (c) until an EOF entry is found (after slides 135--137).}
+\label{fig:fatread}
+\end{figure}
+
 Two notes. The kernel usually needs to know all the cluster numbers before the actual reading starts, so a file is not necessarily read sequentially. And besides EOF, unallocated ($0$), and allocated, a cluster can also be \emph{damaged}, i.e., contain bad sectors; the FAT value of a damaged cluster is \code{0x0FFFFFF7}.
 
 \subsection{Writing a File}
@@ -142,36 +405,38 @@ To append one cluster to \code{explorer.exe} (\Cref{fig:fatwrite}):
   \item Allocate the cluster by changing the FATs and FSINFO: entry 33 becomes 34, entry 34 becomes EOF, the number of free clusters drops from 100 to 99, and the next free cluster becomes 35. \emph{Both} FATs must be updated.
 \end{enumerate}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}
-  \foreach \lab/\x in {Before/0, After/6.2} {
-    \begin{scope}[xshift=\x cm]
-      \node[font=\small\bfseries] at (1.4,0.8) {\lab};
-      \node[hcell, minimum width=20mm, font=\tiny\bfseries] (h1) at (0,0) {\# of free clusters};
-      \node[hcell, minimum width=20mm, font=\tiny\bfseries, below=0pt of h1] (h2) {Next free cluster};
-      \node[font=\scriptsize\itshape, anchor=north] at (h2.south) {FSINFO};
+\begin{tikzpicture}[fatfig]
+  \foreach \p/\dy in {a/0, b/300} {
+    \begin{scope}[shift={(0,\dy)}]
+      \node[font=\small, anchor=east] at (120,434) {(\p)};
+      \fatbar \cdrive
+      \node[font=\scriptsize] at (318,268) {FSINFO structure};
+      \node[font=\tiny, align=left, anchor=north west] at (215,350) {inside the\\ reserved space};
+      \draw[-{Stealth[length=1.4mm]}, densely dotted] (331,350) -- (331,398);
     \end{scope}
   }
-  \foreach \c/\v [count=\i] in {2/EOF, \dots/\dots, 32/33, 33/EOF, 34/0, 35/0} {
-    \node[font=\scriptsize, anchor=east] at (2.9,0.6-0.5*\i) {\c};
-    \node[cell, fill=metac, minimum width=12mm] (o\i) at (3.6,0.6-0.5*\i) {\v};
-  }
-  \begin{scope}[xshift=6.2cm]
-    \foreach \c/\v [count=\i] in {2/EOF, \dots/\dots, 32/33, 33/34, 34/EOF, 35/0} {
-      \node[font=\scriptsize, anchor=east] at (2.9,0.6-0.5*\i) {\c};
-      \node[cell, fill=metac, minimum width=12mm] (n\i) at (3.6,0.6-0.5*\i) {\v};
-    }
-    \node[draw=sigc, thick, fit=(n4)(n5), inner sep=0pt] {};
+  % (a) steps 1 and 2
+  \fsinfo{218}{287}{150}{100}{34}
+  \fatcol{575}{234}{106}{EOF, \dots, 33, EOF, 0, 0}
+  \fatblock{fc3}{1} \fatblock{fc4}{2}
+  \node[hl, fit=(fi4), inner sep=0pt] {};
+  \node[hl, fit=(fi5), inner sep=0pt] (n34) {};
+  \draw[-{Stealth[length=1.4mm]}, densely dotted] (425,325) -- (n34.west);
+  % (b) step 3
+  \begin{scope}[shift={(0,300)}]
+    \fsinfo{218}{287}{150}{99}{35}
+    \fatcol{575}{234}{106}{EOF, \dots, 33, 34, EOF, 0}
+    \fatblock{fc3}{1} \fatblock{fc4}{2} \fatblock{fc5}{3}
+    \draw[hl] (372,281) rectangle (414,343);
+    \draw[hl] (605,309) rectangle (651,359);
+    \node[hl, fit=(fi6), inner sep=1pt] (n35) {};
+    \draw[-{Stealth[length=1.4mm]}, densely dotted] (425,333) -- (n35.west);
+    \node[draw, font=\tiny, anchor=north west] at (706,212) {Both FATs must be updated.};
   \end{scope}
-  \node[cell, minimum width=8mm] at (1.4,0) {100};
-  \node[cell, minimum width=8mm] at (1.4,-0.5) {34};
-  \node[cell, minimum width=8mm, draw=sigc, thick] at (7.6,0) {99};
-  \node[cell, minimum width=8mm, draw=sigc, thick] at (7.6,-0.5) {35};
-  \node[font=\scriptsize\itshape, color=cmt] at (3.6,-3.1) {FAT (both copies)};
-  \node[font=\scriptsize\itshape, color=cmt] at (9.8,-3.1) {FAT (both copies)};
 \end{tikzpicture}
-\caption{Appending cluster 34 to a file that ends at cluster 33: two FAT entries and both FSINFO fields change (after slides 139--141).}
+\caption{Appending a cluster to a file that ends at cluster 33: (a) find the end of the chain and the next free cluster in FSINFO; (b) two FAT entries and both FSINFO fields change (after slides 139--141).}
 \label{fig:fatwrite}
 \end{figure}
 
@@ -179,13 +444,42 @@ If more than one extra cluster is needed, a circular, next-available search is p
 
 \subsection{Deleting a File}
 
-To delete \code{explorer.exe}, now clusters 32, 33, and 34:
+To delete \code{explorer.exe}, now clusters 32, 33, and 34 (\Cref{fig:fatdelete}):
 \begin{enumerate}
   \item Find the directory entry and, from it and the FAT, the locations of the clusters.
   \item Set all the next-cluster fields of that file in the FATs to $0$.
   \item Update the FSINFO structure: the number of free clusters goes from 99 to 102, and the next free cluster becomes 32.
   \item Change the first character of the filename to \code{0xE5}, which marks the entry as unallocated (\code{explorer.exe} becomes \code{\aa xplorer.exe} when \code{0xE5} is shown as a character).
 \end{enumerate}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[fatfig]
+  \foreach \p/\dy in {a/0, b/290} {
+    \begin{scope}[shift={(0,\dy)}]
+      \node[font=\small, anchor=east] at (120,434) {(\p)};
+      \fatbar \cdrive
+      \node[font=\scriptsize, anchor=east] at (264,344) {FSINFO structure};
+    \end{scope}
+  }
+  % (a) step 1
+  \fatent{206}{313}{400}{469}{244}{explorer.exe}{32}
+  \fsinfo{270}{319}{150}{99}{35}
+  \fatcol{575}{234}{106}{EOF, \dots, 33, 34, EOF, 0}
+  \fatblock{fc3}{1} \fatblock{fc4}{2} \fatblock{fc5}{3}
+  % (b) steps 2 to 4
+  \begin{scope}[shift={(0,290)}]
+    \fatent{206}{313}{400}{469}{244}{\aa xplorer.exe}{32}
+    \node[hl, fit=(en), inner sep=0pt] {};
+    \fsinfo{270}{319}{150}{102}{32}
+    \draw[hl] (424,313) rectangle (464,375);
+    \fatcol{575}{234}{106}{EOF, \dots, 0, 0, 0, 0}
+    \draw[hl] (605,284) rectangle (651,359);
+  \end{scope}
+\end{tikzpicture}
+\caption{Deleting \code{explorer.exe}: (a) the entry, FSINFO, and the chain 32, 33, 34; (b) the chain is zeroed, FSINFO is updated, and the first character becomes \code{0xE5} (after slides 143--146).}
+\label{fig:fatdelete}
+\end{figure}
 
 \begin{keypoint}[Lazy Deletion]
   The file is not really deleted. Neither the clusters nor most of the directory entry are erased, so a search of the free space finds all deleted file contents, and they persist until the deallocated clusters are reused. This is a trade-off between performance (during deletion) and security.
@@ -198,6 +492,7 @@ How to delete a file securely is a topic of its own (the slides point to \emph{R
   \item If it is larger than one cluster, the addresses of the other clusters are gone, since the FAT chain was zeroed. But because of the next-available search, the clusters of a file are likely to have been allocated contiguously. If not, you had better know the exact file size and checksum of the deleted file beforehand, so that you can recover it by brute force.
 \end{itemize}
 
+\enlargethispage{\baselineskip}
 \subsection{Summary}
 
 FAT is a simple yet pretty good file system. Its space overhead is 4 bytes (one FAT entry) per data cluster. Security is not a consideration in its design: it keeps no owners or permissions, and it deletes lazily. It was widely deployed, and it still is: it dominates SD cards and USB flash drives because every OS can read it.

@@ -1,7 +1,60 @@
 \section{Linux File System Internals}
 \label{sec:vfs}
 
-The previous sections were about the file organization level of \Cref{sec:alloc}. This one moves up to the logical representation level: how the kernel models a file. It faces two ways: toward the user program it speaks in file descriptors and file content; toward the disk, in metadata and file content.
+% Figure palette for this section, after the slides' kernel-structure diagrams
+\definecolor{vpind}{HTML}{353598}   % struct files_struct
+\definecolor{vpyel}{HTML}{FFFF66}   % NTFS functions
+\tikzset{
+  vpts/.style={draw=white, very thick, rounded corners=6pt, fill=datac},
+  vpfs/.style={draw=white, very thick, rounded corners=5pt, fill=vpind},
+  vpw/.style={draw=white, thick, text=white, font=\scriptsize, inner sep=2pt, minimum height=4.5mm},
+  vpslot/.style={draw=white, fill=dirc, font=\scriptsize, minimum size=4.5mm, inner sep=0pt},
+  vpsq/.style={draw=white, fill=dirc, minimum size=4mm, inner sep=0pt},
+  vpmod/.style={fill=metac, font=\scriptsize\bfseries, align=center, inner sep=3pt},
+  vpkern/.style={fill=kspace, rounded corners=3pt, inner sep=8pt,
+                 label={[font=\small\itshape, anchor=south west, xshift=3pt, yshift=3pt]south west:Kernel memory}},
+  vpdot/.style={-{Stealth[length=1.6mm]}, densely dotted, thick},
+  % a stack of platters with "Disk" on top; anchors -top, -bot, -west, -east
+  pics/vpdisk/.style={code={
+    \foreach \y in {-0.6,-0.45,-0.3,-0.15,0} {
+      \fill[black!45, draw=white, line width=0.8pt] (-0.62,\y+0.15) -- (-0.62,\y)
+        arc[start angle=180, end angle=360, x radius=0.62, y radius=0.16] -- (0.62,\y+0.15) -- cycle;
+    }
+    \fill[black!45, draw=white, line width=0.8pt] (0,0.15) ellipse[x radius=0.62, y radius=0.16];
+    \node[text=white, font=\scriptsize\bfseries] at (0,0.15) {Disk};
+    \coordinate (-top) at (0,0.31); \coordinate (-bot) at (0,-0.76);
+    \coordinate (-west) at (-0.62,-0.2); \coordinate (-east) at (0.62,-0.2);
+  }},
+  % a file: a page with a few text lines; anchors -west, -south
+  pics/vpdoc/.style={code={
+    \draw[fill=freec] (-0.4,-0.45) rectangle (0.4,0.45);
+    \foreach \a/\b/\y in {-0.28/0.2/0.3, -0.1/0.3/0.13, -0.28/0.2/-0.04, -0.18/0.3/-0.25}
+      \draw[thin] (\a,\y) -- (\b,\y);
+    \coordinate (-west) at (-0.4,0); \coordinate (-south) at (0,-0.45);
+  }},
+  % \vptab: a VFS function structure, four orange rows
+  pics/vptab/.style={code={
+    \foreach \k in {0,...,3} \draw[white, fill=dirc] (0,-0.17*\k) rectangle (0.65,-0.17*\k-0.17);
+    \foreach \k in {0,...,3} \coordinate (-r\k) at (0.65,-0.17*\k-0.085);
+    \coordinate (-nw) at (0,0); \coordinate (-sw) at (0,-0.68);
+    \coordinate (-ne) at (0.65,0); \coordinate (-se) at (0.65,-0.68);
+  }},
+}
+
+The previous sections were about the file organization level of \Cref{sec:alloc}. This one moves up to the logical representation level: how the kernel models a file. It faces two ways: toward the user program it speaks in file descriptors and file content; toward the disk, in metadata and file content (\Cref{fig:logiclevel}).
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+  \node[draw=usedc!60!black, fill=usedc, font=\scriptsize\bfseries, minimum width=20mm, minimum height=7mm] (user) at (0,0) {User program};
+  \node[draw=bootc, fill=kspace, font=\scriptsize\bfseries, minimum width=20mm, minimum height=7mm] (kern) at (4.6,0) {Kernel};
+  \pic (dk) at (8.2,0.15) {vpdisk};
+  \draw[{Stealth[length=2mm]}-{Stealth[length=2mm]}, thick] (user) -- node[above, font=\scriptsize, align=center] {File descriptor and\\ file content} (kern);
+  \draw[{Stealth[length=2mm]}-{Stealth[length=2mm]}, thick] (kern) -- node[above, font=\scriptsize, align=center] {Metadata and\\ file content} (dk-west |- kern);
+\end{tikzpicture}
+\caption{The logical representation level: the kernel between the user program and the disk (after slide 181).}
+\label{fig:logiclevel}
+\end{figure}
 
 \subsection{From File Descriptor to Inode}
 
@@ -19,70 +72,182 @@ There is a strong relationship between a process and its open files: each proces
   \item The \code{struct file} refers to the \emph{directory entry} of the file, which in turn contains the name and the inode of the file.
 \end{itemize}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}[kbox/.style={draw, rounded corners=3pt, text=white, font=\scriptsize\bfseries, align=center, inner sep=3pt},
-                    fl/.style={draw, fill=white, font=\scriptsize\ttfamily, inner sep=2pt, minimum height=4.5mm},
-                    slot/.style={draw, fill=dirc, font=\scriptsize, minimum size=4.5mm, inner sep=0pt}]
-  \node[kbox, fill=datac, minimum width=24mm, minimum height=17mm, anchor=north] (ts) at (0,0) {};
-  \node[font=\scriptsize\bfseries, text=white, anchor=north] at (ts.north) {struct task\_struct};
-  \node[fl] at (-0.55,-0.85) {pid}; \node[fl] at (0.45,-0.85) {counter};
-  \node[fl] (files) at (0.4,-1.4) {*files};
-  \node[kbox, fill=blue!60!black, minimum width=17mm, minimum height=17mm, anchor=north] (fs) at (2.6,0) {};
-  \node[font=\scriptsize\bfseries, text=white, align=center, anchor=north] at (fs.north) {struct\\ files\_struct};
-  \node[fl] at (2.6,-0.95) {next\_fd};
-  \node[fl] (fdarr) at (2.6,-1.4) {fd};
+\begin{tikzpicture}
+  % (a) task_struct -> files_struct -> fd array; the FS module reads the disk
+  \node[font=\small, anchor=east] at (-0.45,-1.2) {(a)};
+  \node[vpts, minimum width=25mm, minimum height=22mm, anchor=north west] (ts) at (0,0) {};
+  \node[font=\scriptsize\bfseries, text=white] at (1.25,-0.3) {struct task\_struct};
+  \node[vpw] at (0.55,-0.95) {pid}; \node[vpw] at (1.6,-0.95) {counter};
+  \node[vpw] (files) at (1.8,-1.75) {*files};
+  \node[vpfs, minimum width=16mm, minimum height=18.5mm, anchor=north west] (fs) at (3.2,-0.35) {};
+  \node[font=\scriptsize\bfseries, text=white, align=center] at (4.0,-0.75) {struct\\[-2pt] files\_struct};
+  \node[vpw] at (4.0,-1.3) {next\_fd};
+  \node[vpw] (fdarr) at (4.0,-1.75) {fd};
   \draw[arr] (files.east) -- (fs.west |- files);
-  \foreach \k in {0,...,3} \node[slot] (s\k) at (4.2+0.75*\k,-1.4) {\k};
+  \foreach \k in {0,...,3} \node[vpslot] (s\k) at (5.3+0.6*\k,-1.75) {\k};
   \draw[arr] (fdarr.east) -- (s0.west);
-  \foreach \k [evaluate=\k as \j using int(\k+1)] in {0,1,2} \draw[-{Stealth[length=1.3mm]}] (s\k.east) -- (s\j.west);
-  \node[draw, fill=metac, font=\scriptsize\bfseries, align=center] (mod) at (6.0,-0.2) {File system\\ module};
-  \draw[arr] (mod.south) -- (s3.north);
-  \node[kbox, fill=dirc, minimum width=24mm, minimum height=13mm, anchor=north] (file) at (4.9,-2.3) {};
-  \node[font=\scriptsize\bfseries, text=white, anchor=north] at (file.north) {struct file};
-  \node[fl] (de) at (4.9,-3.15) {directory entry};
-  \draw[arr] (s3.south) to[out=-90, in=90] (file.north);
-  \node[draw, fill=freec, rounded corners=3pt, minimum width=14mm, minimum height=13mm, anchor=north] (dent) at (7.6,-2.3) {};
-  \node[fl] at (7.6,-2.65) {name}; \node[fl] (ino) at (7.6,-3.15) {inode};
-  \draw[arr] (de.east) -- (dent.west |- de);
-  \node[draw, fill=greybg, cylinder, shape border rotate=90, aspect=0.25, minimum width=12mm, minimum height=10mm, font=\scriptsize] (disk) at (9.6,-1.4) {Disk};
-  \draw[arr, densely dotted] (ino.east) to[out=0, in=-90] (disk.south);
-  \draw[arr, densely dotted] (disk.west) -- (mod.east);
+  \foreach \k [evaluate=\k as \j using int(\k+1)] in {0,1,2} \draw[-{Stealth[length=1.3mm]}, thick] (s\k.east) -- (s\j.west);
+  \node[vpmod] (mod) at (7.1,-0.6) {File system\\ module};
+  \draw[arr] (mod.south -| s3) -- (s3.north);
+  \node[font=\scriptsize, anchor=south west] (c1) at (2.7,0.05) {Manages all the opened files};
+  \draw[vpdot] (c1.south west) ++(0.2,0) -- (files.north east);
+  \node[font=\scriptsize] (c2) at (6.45,-2.55) {A list of opened files};
+  \draw[vpdot] (c2.north) ++(-0.4,0) -- (s1.south);
   \begin{scope}[on background layer]
-    \node[fit={(ts)(fs)(mod)(file)(dent)}, fill=kspace, rounded corners=3pt, inner sep=8pt,
-          label={[font=\small\itshape, anchor=south east]south east:Kernel memory}] {};
+    \node[vpkern, fit={(ts)(fs)(mod)(c1)(c2)}] {};
+  \end{scope}
+  \pic (dk) at (8.75,-1.3) {vpdisk};
+  \draw[arr] (mod.east) to[out=0, in=90] (dk-top);
+  % (b) struct file -> directory entry -> the file on disk
+  \begin{scope}[yshift=-3.6cm]
+    \node[font=\small, anchor=east] at (-0.45,-1.2) {(b)};
+    \node[vpts, fill=dirc, minimum width=26mm, minimum height=22mm, anchor=north west] (sf) at (0,0) {};
+    \node[font=\small\bfseries, text=white] at (1.3,-0.35) {struct file};
+    \node[vpw] (de) at (1.3,-1.1) {directory entry};
+    \node[font=\scriptsize\bfseries, text=white] at (1.3,-1.7) {\dots\dots};
+    \node[draw, fill=freec, rounded corners=5pt, minimum width=14mm, minimum height=16mm, anchor=north west] (dent) at (3.6,-0.5) {};
+    \node[draw, font=\scriptsize, inner sep=2pt, minimum height=4mm] at (4.3,-0.82) {name};
+    \node[draw, font=\scriptsize, inner sep=2pt, minimum height=4mm] (ino) at (4.3,-1.38) {inode};
+    \node[font=\scriptsize\bfseries] at (4.3,-1.8) {\dots};
+    \draw[arr] (de.east) -- (dent.west |- de);
+    \coordinate (kr) at (6.0,0);
+    \coordinate (kb) at (0,-2.55);
+    \begin{scope}[on background layer]
+      \node[vpkern, fit={(sf)(dent)(kr)(kb)}] {};
+    \end{scope}
+    \pic (doc) at (7.5,-0.45) {vpdoc};
+    \pic (dk2) at (7.6,-2.0) {vpdisk};
+    \draw[vpdot] (dent.east |- ino) to[out=0, in=180] (doc-west);
+    \draw[vpdot] (doc-south) -- (dk2-top);
   \end{scope}
 \end{tikzpicture}
-\caption{An open file in the Linux kernel: the file descriptor 3 indexes the \code{fd} array of the process's \code{files\_struct}, whose entry is a \code{struct file} referring to the directory entry and inode of the file (after slides 183--187).}
+\caption{An open file in the Linux kernel. (a) The \ts{} points to the \code{files\_struct}, whose \code{fd} array lists the open files; on \code{open()}, the file system module reads the metadata from the disk and the new file gets descriptor 3. (b) The \code{struct file} refers to the directory entry, which holds the name and the inode of the file (after slides 183--187).}
 \label{fig:openfile}
 \end{figure}
 
 \begin{keypoint}[Scope of a File Descriptor]
-  The scope of a file descriptor is restricted to its process. Different processes may use different descriptors to refer to the same file, and the same descriptor number in two processes may refer to different files.
+  The scope of a file descriptor is restricted to its process. Different processes may use different descriptors to refer to the same file, and the same descriptor number in two processes may refer to different files (\Cref{fig:fdscope}).
 \end{keypoint}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+  \foreach \r/\dx/\dy in {1/0/0, 2/0.45/-1.5} {
+    \begin{scope}[xshift=\dx cm, yshift=\dy cm]
+      \node[vpts, minimum width=13mm, minimum height=13mm] (t\r) at (0.8,-0.85) {};
+      \node[vpfs, minimum width=9.5mm, minimum height=8.5mm] (f\r) at (2.35,-1.05) {};
+      \foreach \k in {0,1,2} \node[vpsq] (q\r\k) at (3.45+0.55*\k,-1.05) {};
+      \node[font=\scriptsize\bfseries] at (5.05,-1.05) {\dots};
+      \draw[arr] (t\r.east |- f\r) -- (f\r.west);
+      \draw[arr] (f\r.center) -- (q\r0.west);
+      \draw[-{Stealth[length=1.3mm]}, thick] (q\r0) -- (q\r1);
+      \draw[-{Stealth[length=1.3mm]}, thick] (q\r1) -- (q\r2);
+    \end{scope}
+  }
+  \coordinate (kr) at (6.0,0); \coordinate (kb) at (0,-3.35);
+  \begin{scope}[on background layer]
+    \node[vpkern, fit={(t1)(t2)(f2)(kr)(kb)}] {};
+  \end{scope}
+  \pic (doc) at (7.4,-0.85) {vpdoc};
+  \pic (dk) at (7.5,-2.45) {vpdisk};
+  \draw[vpdot] (doc-south) -- (dk-top);
+  \draw[arr] (q11.center) to[out=-90, in=195] (doc-west);
+  \draw[arr] (q22.center) to[out=90, in=225] ($(doc-west)+(0.15,-0.5)$);
+\end{tikzpicture}
+\caption{Two processes refer to the same file through different file descriptors (after slide 188).}
+\label{fig:fdscope}
+\end{figure}
 
 \subsection{The Virtual File System}
 
 What is the file system module, then? It is the core of Linux's file system support: it implements how Linux deals with the disk, and it implements the \emph{virtual file system}.
 
 \begin{definition}[Virtual File System]
-  In the \emph{virtual file system} (VFS), each open file is associated with a set of file system functions: \code{open}, \code{close}, \code{read}, \code{write}, \code{lseek}, \dots{} They are just function pointers, the \emph{VFS functions}, and they are invoked by the FS-related system calls: \code{sys\_read()} calls the file's \code{read} pointer, and so on. The pointers refer to \emph{FS-specific} functions, and their values are set when the file is opened, according to where the file is: if it is on an ext4 partition, they point to the ext4 functions.
+  In the \emph{virtual file system} (VFS), each open file is associated with a set of file system functions: \code{open}, \code{close}, \code{read}, \code{write}, \code{lseek}, \dots{} They are just function pointers, the \emph{VFS functions}, and they are invoked by the FS-related system calls: \code{sys\_read()} calls the file's \code{read} pointer, and so on. The pointers refer to \emph{FS-specific} functions, and their values are set when the file is opened, according to where the file is: if it is on an ext4 partition, they point to the ext4 functions (\Cref{fig:vfsptr}).
 \end{definition}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}[grp/.style={draw, rounded corners=6pt, align=left, font=\scriptsize\ttfamily, inner sep=5pt}]
-  \node[grp, fill=greybg, rounded corners=0pt] (sys) at (0,0) {\textrm{\bfseries System calls}\\ sys\_open(...); sys\_close(...);\\ sys\_read(...); sys\_write(...);\\ sys\_lseek(...);};
-  \node[grp, fill=dirc!80, rounded corners=0pt] (vfs) at (6.4,0) {\textrm{\bfseries VFS functions}\\ open(...); close(...);\\ read(...); write(...);\\ lseek(...);};
-  \draw[arr] (sys) -- node[above, font=\scriptsize] {invoke} (vfs);
-  \node[grp, fill=metac] (ext) at (1.6,-2.6) {\textrm{\bfseries ext4 FS functions}\\ ext4\_open(...)\\ ext4\_close(...)\\ ext4\_read(...)\\ ext4\_write(...)\\ ext4\_lseek(...)};
-  \node[grp, fill=freec] (fat) at (5.0,-2.6) {\textrm{\bfseries FAT FS functions}\\ fat\_open(...)\\ fat\_close(...)\\ fat\_read(...)\\ fat\_write(...)\\ fat\_lseek(...)};
-  \node[grp, fill=rowc] (ntfs) at (8.4,-2.6) {\textrm{\bfseries NTFS FS functions}\\ ntfs\_open(...)\\ ntfs\_close(...)\\ ntfs\_read(...)\\ ntfs\_write(...)\\ ntfs\_lseek(...)};
-  \draw[arr, very thick, metac!70!black] (vfs.south) -- node[left, font=\scriptsize, black, align=right, pos=0.25, xshift=-4mm] {for a file on ext4,\\ pointers to ext4} (ext.north east);
-  \draw[arr, densely dashed] (vfs.south) -- (fat.north);
-  \draw[arr, densely dashed] (vfs.south) -- node[right, font=\scriptsize] {pointer assignments} (ntfs.north);
+\begin{tikzpicture}
+  % the chain shared by both panels
+  \newcommand{\vpchain}{%
+    \node[vpts, minimum width=14mm, minimum height=14mm] (t) at (0.8,-1.2) {};
+    \node[vpfs, minimum width=10mm, minimum height=9mm] (f) at (2.5,-1.45) {};
+    \foreach \k in {0,1,2} \node[vpsq, minimum size=3.8mm] (q\k) at (3.7+0.65*\k,-1.45) {};
+    \draw[arr] (t.east |- f) -- (f.west);
+    \draw[arr] (f.center) -- (q0.west);
+    \draw[-{Stealth[length=1.3mm]}, thick] (q0) -- (q1);
+    \draw[-{Stealth[length=1.3mm]}, thick] (q1) -- (q2);
+    \pic (ta) at (4.15,-0.25) {vptab};
+    \pic (tb) at (4.65,-1.77) {vptab};
+    \draw[-{Stealth[length=1.6mm]}, thick] (q0.center) -- (ta-sw);
+    \draw[-{Stealth[length=1.6mm]}, thick] (q1.center) -- (tb-nw);}
+  % (a) the VFS function structures
+  \node[font=\small, anchor=east] at (-0.45,-1.2) {(a)};
+  \vpchain
+  \node[font=\scriptsize, align=center] (vl) at (7.0,-1.2) {VFS function\\ structure};
+  \draw[vpdot] (vl.north west) -- (ta-r1);
+  \draw[vpdot] (vl.south west) -- (tb-ne);
+  \coordinate (kr) at (8.3,0); \coordinate (kb) at (0,-2.55);
+  \begin{scope}[on background layer]
+    \node[vpkern, fit={(t)(kr)(kb)}] {};
+  \end{scope}
+  % (b) the pointers refer to FS-specific functions, chosen by the file's location
+  \begin{scope}[yshift=-3.7cm]
+    \node[font=\small, anchor=east] at (-0.45,-1.2) {(b)};
+    \vpchain
+    \node[draw, cylinder, shape border rotate=90, aspect=0.3, fill=metac, minimum width=12mm, minimum height=9mm, font=\scriptsize] (cext) at (2.5,0.0) {ext4};
+    \node[draw, cylinder, shape border rotate=90, aspect=0.3, fill=freec, minimum width=11mm, minimum height=7.5mm, font=\scriptsize] (cfat) at (3.35,-2.4) {FAT};
+    \draw[vpdot] (q0.north) to[out=90, in=-30] (cext.south east);
+    \draw[vpdot] (q1.south west) -- (cfat.north east);
+    \foreach \nm/\x/\y/\c/\w in {ext4/6.6/-0.5/metac/7.5, NTFS/7.75/-0.55/vpyel/7.5, FAT/7.0/-2.05/freec/10.5} {
+      \node[draw, rounded corners=4pt, fill=\c, minimum width=\w mm, minimum height=9mm] (b\nm) at (\x,\y) {};
+      \node[draw, font=\tiny\bfseries, inner sep=1.5pt] at (\x,\y+0.17) {\nm};
+      \node[font=\scriptsize\bfseries] at (\x,\y-0.22) {$\cdot\cdot\cdot$};
+    }
+    \foreach \k in {0,...,3} {
+      \draw[vpdot, thin] (ta-r\k) .. controls +(0.6,0.3) and +(-0.6,0) .. ($(bext4.north west)+(0,-0.15-0.17*\k)$);
+      \draw[vpdot, thin] (tb-r\k) .. controls +(0.5,0) and +(-0.5,-0.1) .. ($(bFAT.north west)+(0,-0.2-0.15*\k)$);
+    }
+    \coordinate (kr) at (8.3,0); \coordinate (kb) at (0,-2.6);
+    \begin{scope}[on background layer]
+      \node[vpkern, fit={(t)(cext)(cfat)(kr)(kb)}] {};
+    \end{scope}
+  \end{scope}
 \end{tikzpicture}
-\caption{The VFS: system calls invoke the VFS function pointers of the open file, which were assigned the functions of the file system the file lives on. For a file on ext4, invoking the VFS functions means invoking the ext4 functions (after slide 194).}
+\caption{VFS function structures. (a) Entries of the \code{fd} array point to VFS function structures. (b) The VFS function pointers refer to FS-specific functions; which ones is determined by the location of the opened file, an ext4 or a FAT partition (after slides 190--193).}
+\label{fig:vfsptr}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[hdr/.style={draw, font=\scriptsize\bfseries, inner sep=2pt},
+                    fsb/.style={draw, rounded corners=10pt, minimum width=29mm, minimum height=26mm},
+                    fat/.style={single arrow, draw, minimum width=8mm, single arrow head extend=2mm, inner sep=1.5mm}]
+  \newcommand{\vpfat}[3]{%
+    \path let \p1=($(#2)-(#1)$), \n1={atan2(\y1,\x1)}, \n2={veclen(\x1,\y1)} in
+      node[fat, fill=#3, minimum height=\n2, rotate=\n1, anchor=tail] at (#1) {};}
+  \node[draw, fill=black!15, minimum width=48mm, minimum height=17mm] (sys) at (0,0) {};
+  \node[hdr, fill=black!15] at (0,0.52) {System calls};
+  \node[font=\scriptsize\ttfamily, align=center] at (0,-0.22) {sys\_open(...); sys\_close(...);\\ sys\_read(...); sys\_write(...);\\ sys\_lseek(...);};
+  \node[draw, fill=dirc, minimum width=48mm, minimum height=17mm] (vfs) at (6.6,0) {};
+  \node[hdr, fill=dirc] at (6.6,0.52) {VFS functions};
+  \node[font=\scriptsize\ttfamily, align=center] at (6.6,-0.22) {open(...); close(...);\\ read(...); write(...);\\ lseek(...);};
+  \node[single arrow, fill=freec, minimum height=15mm, minimum width=9mm, single arrow head extend=1.5mm, inner sep=1pt, font=\scriptsize\bfseries] at (3.3,0) {Invoke};
+  \foreach \nm/\pre/\x/\c in {ext4/ext4/0.1/metac, FAT/fat/3.5/freec, NTFS/ntfs/6.9/vpyel} {
+    \node[fsb, fill=\c] (b\pre) at (\x,-3.7) {};
+    \node[hdr] at (\x,-2.75) {\nm{} FS functions};
+    \node[font=\scriptsize\ttfamily, align=left] at (\x,-3.9) {\pre\_open(...)\\ \pre\_close(...)\\ \pre\_read(...)\\ \pre\_write(...)\\ \pre\_lseek(...)};
+  }
+  \vpfat{4.4,-0.95}{1.85,-2.4}{metac}
+  \vpfat{5.6,-1.0}{4.45,-2.4}{freec}
+  \vpfat{6.9,-0.95}{6.9,-2.35}{vpyel}
+  \node[font=\scriptsize, align=left, anchor=east] at (2.7,-1.45) {Invoking VFS functions means\\ invoking the ext4 functions.};
+  \node[font=\scriptsize, anchor=west] at (7.35,-1.55) {Pointer assignments};
+\end{tikzpicture}
+\caption{The VFS: system calls invoke the VFS function pointers of the open file, which were assigned the functions of the file system the file lives on. For a file on ext4, invoking the VFS functions means invoking the ext4 functions (after slides 191 and 194).}
 \label{fig:vfs}
 \end{figure}
 

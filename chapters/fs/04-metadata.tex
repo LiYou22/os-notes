@@ -1,4 +1,8 @@
-\section{Free Space, Directories, and File System Information}
+% shorter running header so it fits on one line
+\let\oldsectionmark\sectionmark
+\renewcommand{\sectionmark}[1]{\markright{\thesection.\ File System Design: Free Space, Directories, FS Info}}
+\section{File System Design: Free Space, Directories, and File System Information}
+\let\sectionmark\oldsectionmark
 \label{sec:fsmeta}
 
 \subsection{Free-Space Management}
@@ -6,34 +10,109 @@
 The FS must handle free space when a file is deleted, when a file is created, and when the file system itself is initialized. The design goals: keep track of \emph{every} free block, and be as FS independent as possible.
 
 \subsubsection{Attempt 1: a linked list of free blocks}
-Allocate data blocks that store the list of the addresses of the free blocks; the FS needs to remember the starting block of that list (which could be hard coded). How much space does this take? A 128\,GB disk with 1\,KB blocks has $128 \times 2^{30} / 2^{10} = 2^{27}$ blocks. With 32-bit block addresses, listing all of them takes $4 \times 2^{27} = 2^{29}$ bytes $= 512\,\text{MB}$ when the disk is empty.
+Allocate data blocks that store the list of the addresses of the free blocks (\Cref{fig:freelist}); the FS needs to remember the starting block of that list (which could be hard coded). How much space does this take? A 128\,GB disk with 1\,KB blocks has $128 \times 2^{30} / 2^{10} = 2^{27}$ blocks. With 32-bit block addresses, listing all of them takes $4 \times 2^{27} = 2^{29}$ bytes $= 512\,\text{MB}$ when the disk is empty.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \draw[fill=metac] (0,0) rectangle (2.97,1.0);
+  \node[font=\small, align=center] at (1.6,0.42) {Reserved\\ space};
+  \draw[fill=white] (0.27,0.68) rectangle (0.54,0.93);
+  \foreach \i in {0,...,3} \draw[fill=rowc] ({2.97+0.27*\i},0) rectangle ++(0.27,1.0);
+  \foreach \i in {0,...,21} \draw[fill=freec] ({4.05+0.27*\i},0) rectangle ++(0.27,1.0);
+  \node[font=\scriptsize, anchor=north] at (0,-0.05) {0};
+  \node[font=\scriptsize, anchor=north] at (10,-0.05) {100\,GB};
+  % zoomed-in view of the yellow blocks
+  \fill[rowc] (0.54,1.4) rectangle (6.62,3.5);
+  \draw[densely dotted, thick] (0.54,1.4) -- (2.97,1.0) (6.62,1.4) -- (4.05,1.0);
+  \foreach \x/\n/\a/\b/\c/\d in {0.95/1/10/12/\dots/2, 2.97/2/\dots/\dots/\dots/3, 4.86/3/\dots/\dots/\dots/0} {
+    \node[font=\scriptsize] at (\x+0.675,3.15) {Block \n};
+    \foreach \v [count=\r] in {\a,\b,\c,\d}
+      \draw[fill=freec] (\x,{2.9-0.3*\r}) rectangle ++(1.35,0.3) node[midway, font=\scriptsize] {\v};
+  }
+  \draw[arr] (2.25,1.72) .. controls (2.75,1.72) and (2.45,2.85) .. (2.97,2.88);
+  \draw[arr] (4.27,1.72) .. controls (4.77,1.72) and (4.35,2.85) .. (4.86,2.88);
+  % where the list starts
+  \node[draw, fill=metac, font=\scriptsize, align=center] at (-1.35,2.1) {Start of the\\ free list:\\ \textbf{Block 1}};
+  \draw[arr] (-0.45,1.55) -- (0.3,0.9);
+\end{tikzpicture}
+\caption{Attempt 1: the addresses of the free blocks are kept in a linked list of blocks; the FS remembers where the list starts (after slide 97).}
+\label{fig:freelist}
+\end{figure}
 
 \subsubsection{Attempt 2: a bitmap}
-What we need to represent is just a series of Boolean values, one per block.
+What we need to represent is just a series of Boolean values, one per block (\Cref{fig:bitmap}).
 
 \begin{definition}[Block Bitmap]
   A \emph{block bitmap} has one bit per block: $0$ means the block is unallocated and $1$ means it is allocated.
 \end{definition}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm, bk1/.style={fill=usedc}, bk0/.style={fill=freec}]
+  \draw[fill=metac] (0,0) rectangle (2.97,1.0);
+  \node[font=\small, align=center] at (1.6,0.42) {Reserved\\ space};
+  \draw[fill=white] (0.27,0.68) rectangle (0.54,0.93);
+  \foreach \i in {0,...,3} \draw[fill=rowc] ({2.97+0.27*\i},0) rectangle ++(0.27,1.0);
+  \foreach \c [count=\i from 0] in {1,1,1,0,0,0,0,1,0,0,1,1,1,1,1,1,0,0,0,0,1,0}
+    \draw[bk\c] ({4.05+0.27*\i},0) rectangle ++(0.27,1.0);
+  \node[font=\scriptsize, anchor=north] at (0,-0.05) {0};
+  \node[font=\scriptsize, anchor=north] at (10,-0.05) {100\,GB};
+  % zoomed-in view of the yellow blocks: the bitmap
+  \fill[rowc] (2.57,1.4) rectangle (10.0,2.6);
+  \draw[densely dotted, thick] (2.57,1.4) -- (2.97,1.0) (10.13,1.4) -- (4.05,1.0);
+  \draw[fill=usedc] (3.11,1.8) rectangle (6.35,2.3);
+  \draw[fill=usedc] (7.03,1.8) rectangle (9.59,2.3);
+  \foreach \c [count=\i] in {1,1,1,0,0,0,0,1,0,0,1,1,1}
+    \node[font=\scriptsize, inner sep=0pt] (bit\i) at ({3.11+0.249*(\i-0.5)},2.05) {\c};
+  \foreach \c [count=\i from 14] in {1,1,1,0,0,0,0,1,0}
+    \node[font=\scriptsize, inner sep=0pt] (bit\i) at ({7.03+0.284*(\i-13.5)},2.05) {\c};
+  \foreach \i in {1,3,8,11,13,14,16,21}
+    \draw[-{Stealth[length=1.3mm]}] (bit\i.south) ++(0,-0.1) -- ({4.05+0.27*(\i-0.5)},1.0);
+  \node[draw, fill=metac, font=\scriptsize, align=center] at (-1.35,2.1) {Start of the\\ free list:\\ \textbf{Block 1}};
+  \draw[arr] (-0.45,1.55) -- (0.3,0.9);
+\end{tikzpicture}
+\caption{Attempt 2: a bitmap of block allocation, one bit per block (after slide 99).}
+\label{fig:bitmap}
+\end{figure}
 
 For the same disk, the bitmap takes $2^{27}$ bits $= 2^{24}$ bytes $= 16\,\text{MB}$, a factor of 32 smaller than the list, and independent of how full the disk is. ext2/3/4 use this implementation.
 
 \subsubsection{FAT's choice}
 FAT16 has almost no free-space management: the FAT itself indicates which clusters are free (entry value $0$), and nothing else. FAT32 adds two fields that \emph{hint} at the state of the free space: the location of the first free cluster, and the total number of free clusters (\Cref{fig:fathints}). They are only hints: the values are not necessarily correct.
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}
-  \node[hcell, minimum width=17mm] (bh) at (0,0) {Block \#};
-  \node[hcell, minimum width=17mm, below=0pt of bh] (nh) {Next block};
-  \foreach \b/\n [count=\i] in {2/3, 3/EOF, 4/0, 5/0, 6/7, 7/8, 8/16, 9/0, \dots/\dots} {
-    \node[cell, minimum width=9mm, fill=bootc!40] at ($(bh.east)+(0.45+0.9*\i-0.9,0)$) {\b};
-    \node[cell, minimum width=9mm] (c\i) at ($(nh.east)+(0.45+0.9*\i-0.9,0)$) {\n};
+\begin{tikzpicture}[x=1cm, y=1cm, bk1/.style={fill=usedc}, bk0/.style={fill=freec}]
+  % disk
+  \draw[fill=metac] (0,0) rectangle (2.97,1.0);
+  \node[font=\small, align=center] at (1.75,0.5) {FAT FS\\ data};
+  \draw[fill=rowc] (0.14,0.35) rectangle (0.54,0.68);
+  \foreach \c [count=\i from 0] in {1,1,0,0,1,1,1,0,0,0,0,1,0,0,1,1,1,1,1,1,0,0,0,0,1,0}
+    \draw[bk\c] ({2.97+0.27*\i},0) rectangle ++(0.27,1.0);
+  \node[font=\scriptsize, anchor=north] at (0,-0.05) {0};
+  \node[font=\scriptsize, anchor=north] at (10,-0.05) {100\,GB};
+  % the FAT
+  \def\cols{0.27,2.59,3.18,4.12,4.66,5.20,5.78,6.32,6.91,7.47,8.04}
+  \foreach \l/\r/\t/\n in {0.27/2.59/Block \#/Next block, 2.59/3.18/2/3, 3.18/4.12/3/EOF, 4.12/4.66/4/0,
+      4.66/5.20/5/0, 5.20/5.78/6/7, 5.78/6.32/7/8, 6.32/6.91/8/16, 6.91/7.47/9/0, 7.47/8.04/\dots/\dots} {
+    \draw[fill=bootc] (\l,2.74) rectangle (\r,3.18) node[midway, text=white, font=\scriptsize\bfseries] {\t};
+    \draw[fill=rowc] (\l,2.31) rectangle (\r,2.74) node[midway, font=\scriptsize] {\n};
   }
-  \node[draw=sigc, thick, fit=(c3), inner sep=0pt] {};
-  \node[font=\scriptsize\itshape, anchor=south] at ($(bh.north east)+(4.05,0)$) {FAT16 and FAT32};
-  \node[draw, fill=rowc, align=left, font=\scriptsize] (hint) at (-1.2,-1.8) {First free cluster $= 4$\\ Number of free clusters $= 13$};
-  \node[font=\scriptsize\itshape, anchor=north] at (hint.south) {hints, FAT32 only};
-  \node[callout, anchor=west] at (4.6,-1.6) {``0'' represents a free cluster,\\ so the first free cluster is 4.};
+  \draw[fill=bootc] (0.27,2.74) rectangle (2.59,3.18) node[midway, text=white, font=\scriptsize\bfseries] {Block \#};
+  \draw[fill=bootc] (0.27,2.31) rectangle (2.59,2.74) node[midway, text=white, font=\scriptsize\bfseries] {Next block};
+  \draw[very thick] (0.27,2.31) rectangle (8.04,3.18);
+  \node[font=\scriptsize, anchor=south] at (4.12,3.22) {FAT16 \& FAT32};
+  \draw[densely dotted, thick] (0.27,2.31) -- (1.89,1.0) (8.04,2.31) -- (2.97,1.0);
+  % callout on the right
+  \draw[fill=white] (7.0,3.75) -- (7.23,3.25) -- (7.45,3.75);
+  \node[callout, anchor=south] at (8.9,3.6) {``0'' represents a free cluster.\\[2pt] Therefore, the \textcolor{sigc}{first free cluster}\\ is at Cluster 4.};
+  % FAT32 hints on the left
+  \node[draw, fill=rowc, font=\scriptsize, align=center] (hint) at (-2.55,1.95) {First free cluster $=$ 4\\[3pt] Number of free clusters $=$ 13};
+  \node[font=\scriptsize, anchor=south] (hl) at (-2.4,2.42) {\textcolor{sigc}{Hints} for FAT32 only};
+  \draw[fill=white] (-3.15,3.35) -- (-2.9,2.88) -- (-2.65,3.35);
+  \node[draw, ellipse, fill=white, font=\scriptsize, align=center, inner sep=1pt, anchor=south] at (-2.9,3.25) {The values are not\\ necessarily correct.};
+  \draw[arr] (hint.south east) ++(-0.1,-0.02) -- (0.2,0.66);
 \end{tikzpicture}
 \caption{Free space in FAT: free clusters are the FAT entries equal to $0$; FAT32 additionally keeps two hints (after slide 102).}
 \label{fig:fathints}
@@ -49,25 +128,45 @@ The FAT approach needs little space. But it is slow in calculating the total amo
 
 A directory usually, but not necessarily, takes only one data block, so there may be a limit on the number of entries. What ``the information about the data blocks'' means depends on the allocation scheme (\Cref{fig:direntries}): with inodes, a directory entry maps a filename to an \emph{inode number}; with a FAT, it maps a filename to the \emph{first data block}, from which the FAT chain continues.
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}
-  \node[hcell, minimum width=18mm] (a1) at (0,0) {Filename};
-  \node[hcell, minimum width=18mm, right=0pt of a1] (a2) {Inode number};
-  \node[cell, minimum width=18mm, font=\scriptsize\ttfamily, below=0pt of a1] (b1) {bin};
-  \node[cell, minimum width=18mm, right=0pt of b1] {1234};
-  \node[cell, minimum width=18mm, font=\scriptsize\ttfamily, below=0pt of b1] (c1) {etc};
-  \node[cell, minimum width=18mm, right=0pt of c1] {890};
-  \node[font=\scriptsize\bfseries, anchor=south] at ($(a1.north east)$) {inode: directory \code{/}};
-  \begin{scope}[xshift=5.5cm]
-    \node[hcell, minimum width=18mm] (d1) at (0,0) {Filename};
-    \node[hcell, minimum width=18mm, right=0pt of d1] {First data block};
-    \node[cell, minimum width=18mm, font=\scriptsize\ttfamily, below=0pt of d1] (e1) {rock.mp3};
-    \node[cell, minimum width=18mm, right=0pt of e1] {1234};
-    \node[cell, minimum width=18mm, font=\scriptsize\ttfamily, below=0pt of e1] (f1) {game.exe};
-    \node[cell, minimum width=18mm, right=0pt of f1] {890};
-    \node[font=\scriptsize\bfseries, anchor=south] at ($(d1.north east)$) {FAT: directory \code{C:\textbackslash}};
-  \end{scope}
+\begin{tikzpicture}[x=0.8cm, y=0.8cm]
+  \tikzset{dent/.style={draw, minimum height=6.4mm, minimum width=28.7mm, inner sep=1pt, font=\scriptsize}}
+  % inode
+  \fill[rowc] (0,0) rectangle (11.75,3.875);
+  \node[font=\scriptsize\bfseries] at (3.75,3.42) {Directory\quad /};
+  \foreach \y/\a/\b/\f in {3.0/Filename/Inode number/metac, 2.25/{/bin}/1234/freec, 1.5/{/etc}/890/freec} {
+    \draw[fill=\f] (0.375,\y) rectangle (3.75,\y-0.75) node[midway, font=\scriptsize] {\a};
+    \draw[fill=\f] (3.75,\y) rectangle (7.125,\y-0.75) node[midway, font=\scriptsize] {\b};
+  }
+  \foreach \x/\y/\s in {8.75/3.5/10.75, 9.0/1.75/11.0} {
+    \draw[fill=usedc] (\x,\y) rectangle (\x+1.6,\y-0.35);
+    \foreach \r in {1,2,3} {
+      \draw[fill=bootc] (\x,{\y-0.35-0.35*(\r-1)}) rectangle ++(0.875,-0.35);
+      \draw[fill=rowc] (\x+0.875,{\y-0.35-0.35*(\r-1)}) rectangle ++(0.725,-0.35);
+    }
+    \draw[very thick] (\x,\y) rectangle (\x+1.6,\y-1.4);
+  }
+  \foreach \x/\y/\ty in {10.75/3.25/3.15, 10.75/2.75/2.8, 10.75/2.12/2.45, 11.0/1.5/1.4, 11.0/1.0/1.05, 11.0/0.375/0.7}
+    \draw[fill=datac] (\x,\y-0.19) rectangle ++(0.375,0.375);
+  \foreach \sx/\sy/\tx/\ty in {10.15/3.2/10.72/3.25, 10.15/2.78/10.72/2.75, 10.15/2.42/10.72/2.12,
+                               10.4/1.45/10.97/1.5, 10.4/1.0/10.97/1.0, 10.4/0.65/10.97/0.375}
+    \draw[-{Stealth[length=1.5mm]}, thick] (\sx,\sy) -- (\tx,\ty);
+  \draw[arr] (6.0,1.9) -- (8.65,2.22);
+  \draw[arr] (6.12,1.12) -- (8.9,0.87);
+  \node[font=\scriptsize\bfseries] at (-0.9,1.91) {inode};
+  % FAT
+  \fill[rowc] (0,-0.25) rectangle (10.625,-4.0);
+  \node[font=\scriptsize\bfseries] at (4.65,-0.69) {Directory\quad C:\textbackslash};
+  \foreach \y/\a/\b/\f in {-1.125/Filename/First data block/metac, -1.875/rock.mp3/1234/freec, -2.625/game.exe/890/freec} {
+    \draw[fill=\f] (0.375,\y) rectangle (3.75,\y-0.75) node[midway, font=\scriptsize] {\a};
+    \draw[fill=\f] (3.75,\y) rectangle (7.125,\y-0.75) node[midway, font=\scriptsize] {\b};
+  }
+  \draw[fill=datac] (8.875,-1.25) rectangle (10.125,-2.25);
+  \draw[fill=datac] (8.875,-2.625) rectangle (10.125,-3.625);
+  \draw[arr] (6.0,-2.25) -- (8.75,-2.0);
+  \draw[arr] (6.27,-3.125) -- (8.75,-3.375);
+  \node[font=\scriptsize\bfseries] at (-0.9,-2.15) {FAT};
 \end{tikzpicture}
 \caption{A directory entry points to an inode in an inode-based FS, and to the first data block in FAT (after slide 106).}
 \label{fig:direntries}
@@ -79,40 +178,39 @@ The FS must also know where the \emph{root} directory is, in order to traverse t
 
 Where attributes live is FS dependent. In FAT16 and FAT32, file attributes are stored inside the \emph{directory entry}. In ext2/3/4, they are stored inside the \emph{inode}, and the directory entry holds only the name and the inode number.
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}[x=1cm]
-  \def\stripe#1#2{%
-    \foreach \k [count=\j] in {#2} {
-      \pgfmathsetmacro{\xx}{#1+0.22*(\j-1)}
-      \ifnum\k=1 \draw[fill=usedc] (\xx,\y-0.35) rectangle ++(0.22,0.7);
-      \else\ifnum\k=2 \draw[fill=dirc] (\xx,\y-0.35) rectangle ++(0.22,0.7);
-      \else \draw[fill=freec] (\xx,\y-0.35) rectangle ++(0.22,0.7); \fi\fi
-    }}
-  \def\y{1.4}
-  \draw[fill=bootc] (0,1.05) rectangle (0.18,1.75);
-  \draw[fill=blue!60!black] (0.18,1.05) rectangle (0.36,1.75);
-  \draw[fill=metac] (0.36,1.05) rectangle (2.4,1.75); \node[font=\small] at (1.38,1.4) {FAT};
-  \draw[fill=rowc] (2.4,1.05) rectangle (2.62,1.75);
-  \stripe{2.62}{0,0,0,1,1,1,0,2,0,1,0,0,1,1,1,1,1,0,0,2,0,1,0,0,1,1,1,0}
-  \def\y{-0.6}
-  \draw[fill=bootc] (0,-0.95) rectangle (1.0,-0.25);
-  \draw[fill=metac] (1.0,-0.95) rectangle (3.0,-0.25); \node[font=\small] at (2.0,-0.6) {Inode table};
-  \draw[fill=rowc] (3.0,-0.95) rectangle (3.22,-0.25);
-  \stripe{3.22}{0,1,1,1,0,2,0,1,0,0,1,1,1,1,1,0,0,2,0,1,0,0,1,1,1}
-  \node[font=\scriptsize, align=center] (fs) at (-0.8,0.4) {free space\\ management};
-  \draw[arr] (fs) -- (0.27,1.05); \draw[arr] (fs) -- (0.5,-0.25);
-  \node[font=\scriptsize, align=center] (fa) at (1.9,0.4) {file allocation\\ management};
-  \draw[arr] (fa) -- (1.38,1.05); \draw[arr] (fa) -- (2.0,-0.25);
-  \node[font=\scriptsize] (rd) at (4.0,0.4) {root directory};
-  \draw[arr] (rd) -- (2.51,1.05); \draw[arr] (rd) -- (3.11,-0.25);
-  \node[font=\scriptsize, anchor=west] at (9.0,1.4) {FAT};
-  \node[font=\scriptsize, anchor=west] at (9.0,-0.6) {inode};
-  \draw[fill=usedc] (6.0,-1.6) rectangle ++(0.22,0.3); \node[font=\scriptsize, anchor=west] at (6.3,-1.45) {allocated};
-  \draw[fill=dirc] (7.5,-1.6) rectangle ++(0.22,0.3); \node[font=\scriptsize, anchor=west] at (7.8,-1.45) {directory};
-  \draw[fill=freec] (9.0,-1.6) rectangle ++(0.22,0.3); \node[font=\scriptsize, anchor=west] at (9.3,-1.45) {free};
+\begin{tikzpicture}[x=1cm, y=1cm, bkg/.style={fill=usedc}, bkb/.style={fill=freec}, bko/.style={fill=dirc}]
+  % FAT
+  \begin{scope}[yshift=2.45cm]
+    \draw[fill=bootc] (0,0) rectangle (0.27,1.0);
+    \draw[fill={rgb,255:red,51;green,51;blue,153}] (0.27,0) rectangle (0.54,1.0);
+    \draw[fill=metac] (0.54,0) rectangle (3.51,1.0); \node[font=\small] at (2.03,0.5) {FAT};
+    \draw[fill=rowc] (3.51,0) rectangle (3.78,1.0);
+    \foreach \c [count=\i from 0] in {b,b,b,b,b,g,g,g,b,o,b,b,g,b,b,g,g,g,g,g,g,b,b,o,b,g,b}
+      \draw[bk\c] ({3.78+0.27*\i},0) rectangle ++(0.27,1.0);
+  \end{scope}
+  % inode
+  \draw[fill=bootc] (0,0) rectangle (1.35,1.0);
+  \draw[fill=metac] (1.35,0) rectangle (4.32,1.0); \node[font=\small] at (2.84,0.5) {Inode table};
+  \draw[fill=rowc] (4.32,0) rectangle (4.59,1.0);
+  \foreach \c [count=\i from 0] in {b,b,g,g,g,b,o,b,b,g,b,b,g,g,g,g,g,g,b,b,o,b,g,b}
+    \draw[bk\c] ({4.59+0.27*\i},0) rectangle ++(0.27,1.0);
+  % labels
+  \node[font=\scriptsize, align=center] at (-0.92,1.72) {Free space\\ management};
+  \draw[arr] (0.18,2.02) -- (0.4,2.42); \draw[arr] (0.15,1.4) -- (0.4,1.02);
+  \node[font=\scriptsize, align=center] at (2.03,1.74) {File allocation\\ management};
+  \draw[arr] (2.03,2.08) -- (1.8,2.42); \draw[arr] (2.55,1.4) -- (2.82,1.02);
+  \node[font=\scriptsize, anchor=west] at (4.75,1.8) {Root directory};
+  \draw[arr] (4.75,1.95) -- (3.68,2.42); \draw[arr] (4.85,1.65) -- (4.47,1.02);
+  \node[font=\scriptsize, align=center] at (11.49,4.03) {Allocated\\ cluster};
+  \draw[arr] (10.98,3.72) -- (10.72,3.4);
+  \node[font=\scriptsize, anchor=west] at (6.55,-0.38) {Directory file};
+  \draw[arr] (6.6,-0.2) -- (6.36,0.08);
+  \node[font=\scriptsize, anchor=west] at (11.0,-0.38) {Free block};
+  \draw[arr] (11.15,-0.2) -- (10.97,0.08);
 \end{tikzpicture}
-\caption{The two designs side by side. FAT keeps file allocation in the FAT, which also marks free clusters, plus a small free-space structure (the FSINFO hints of \Cref{fig:fathints}) in front of it; an inode-based FS has a separate free-space structure and an inode table. Both need to locate the root directory (after slide 110).}
+\caption{The two designs side by side: FAT (top) and an inode-based FS (bottom) (after slide 110).}
 \label{fig:twolayouts}
 \end{figure}
 
@@ -121,10 +219,80 @@ Where attributes live is FS dependent. In FAT16 and FAT32, file attributes are s
 How large is a block? How many blocks are allocated, and how many are free? Where is the root directory? Where is the allocation information (the FAT or the inode table), and how large is it? None of this can be hard coded, because different storage devices have different needs. Every FS therefore reserves a region at a fixed location for exactly this information.
 
 \begin{definition}[Boot Sector and Superblock]
-  The \emph{boot sector} (FAT, NTFS) is the first 512 bytes of the file system. It stores the bytes per sector and the sectors per cluster (which together determine the cluster size), the number of FATs, the number of sectors of the reserved area, the cluster number of the root directory, and the sector number of the free-space data.
+  The \emph{boot sector} (FAT, NTFS) is the first 512 bytes of the file system (\Cref{fig:bootsector}). It stores the bytes per sector and the sectors per cluster (which together determine the cluster size), the number of FATs, the number of sectors of the reserved area, the cluster number of the root directory, and the sector number of the free-space data.
 
-  The \emph{superblock} (ext2/3/4) is a 1024-byte region that stores the number of inodes and of blocks in the FS, the numbers of unallocated inodes and blocks, the block size, the size of each inode structure, and the current and maximum mount counts.
+  The \emph{superblock} (ext2/3/4) is a 1024-byte region (\Cref{fig:superblock}) that stores the number of inodes and of blocks in the FS, the numbers of unallocated inodes and blocks, the block size, the size of each inode structure, and the current and maximum mount counts.
 \end{definition}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm, bkg/.style={fill=usedc}, bkb/.style={fill=freec}, bko/.style={fill=dirc}]
+  % disk
+  \draw[fill=bootc] (0,0) rectangle (1.89,1.0);
+  \node[text=white, font=\small\bfseries, align=center] at (0.945,0.5) {Boot\\ sector};
+  \draw[fill={rgb,255:red,51;green,51;blue,153}] (1.89,0) rectangle (2.30,1.0);
+  \draw[fill=metac] (2.30,0) rectangle (3.78,1.0); \node[font=\small] at (3.04,0.5) {FAT 1};
+  \draw[fill=metac] (3.78,0) rectangle (5.27,1.0); \node[font=\small] at (4.525,0.5) {FAT 2};
+  \draw[fill=rowc] (5.27,0) rectangle (5.54,1.0);
+  \draw[fill=dirc] (5.54,0) rectangle (5.81,1.0);
+  \foreach \c [count=\i from 0] in {b,b,b,b,b,b,g,g,g,b,o,b,b,g,b,b,g,g,g,g,g,g,b,b,o,b,g,b}
+    \draw[bk\c] ({5.81+0.27*\i},0) rectangle ++(0.27,1.0);
+  \node[font=\scriptsize, anchor=west] at (2.55,-0.28) {reserved area};
+  \draw[arr] (2.6,-0.2) -- (2.15,0.02);
+  % boot sector fields
+  \foreach \l/\r/\t/\n in {0.135/2.92/Bytes per sector/Cluster \# of the\\ root dir.,
+                           2.92/5.70/Sectors per cluster/Number of FATs,
+                           5.70/8.49/Sector \# of the\\ free space data/\# of sectors of the\\ reserved area} {
+    \draw[fill=bootc] (\l,2.7) rectangle (\r,3.45) node[midway, text=white, font=\scriptsize, align=center] {\t};
+    \draw[fill=bootc] (\l,1.95) rectangle (\r,2.7) node[midway, text=white, font=\scriptsize, align=center] {\n};
+  }
+  \draw[very thick] (0.135,1.95) rectangle (8.49,3.45);
+  \node[font=\scriptsize, anchor=south] at (2.95,3.8) {These determine the cluster's size};
+  \draw[arr] (0.95,3.85) -- (0.84,3.48); \draw[arr] (3.65,3.85) -- (3.76,3.48);
+  \draw[-{Stealth[length=1.5mm]}, densely dotted, thick] (5.27,1.6) -- (5.06,2.05);
+  \node[font=\scriptsize, anchor=west] at (4.75,1.33) {A backup FAT when the above field is 2.};
+  \draw[arr] (4.86,1.18) -- (4.73,0.9);
+  % a sector on a platter
+  \begin{scope}[shift={(12.2,2.65)}]
+    \fill[gray!12] (0,0) circle (1.3);
+    \foreach \r in {0.25,0.35,...,1.15} \draw[gray!45, very thin] (0,0) circle (\r);
+    \foreach \a in {0,22.5,...,337.5} \draw[gray!45, very thin] (0,0) -- (\a:1.2);
+    \draw[yellow!80!orange, line width=2.5pt] (0,0) circle (1.22);
+    \draw[gray!60] (0,0) circle (1.3);
+    \draw[bootc!80!black, line width=2pt] (5:0.82) arc[start angle=5, end angle=50, radius=0.82];
+    \draw[sigc, thick] (0.36,-0.1) rectangle (1.04,0.85);
+    \node[font=\scriptsize, sigc, anchor=west] at (1.0,1.2) {A sector};
+  \end{scope}
+\end{tikzpicture}
+\caption{The boot sector of a FAT file system (after slide 112).}
+\label{fig:bootsector}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm, bkg/.style={fill=usedc}, bkb/.style={fill=freec}, bko/.style={fill=dirc}]
+  % disk
+  \draw[fill=bootc] (0,0) rectangle (1.89,1.0);
+  \node[text=white, font=\small\bfseries, align=center] at (0.945,0.5) {Super-\\ block};
+  \draw[fill=metac] (1.89,0) rectangle (4.82,1.0); \node[font=\small] at (3.355,0.5) {Inode table};
+  \draw[fill=rowc] (4.82,0) rectangle (6.17,1.0); \node[font=\small, align=center] at (5.495,0.5) {Root\\ dir};
+  \foreach \c [count=\i from 0] in {o,b,b,g,g,g,b,o,b,b,g,b,b,g,g,g,g,g,g,b,b,o,b,g,b}
+    \draw[bk\c] ({6.17+0.27*\i},0) rectangle ++(0.27,1.0);
+  % superblock fields
+  \foreach \l/\r/\t/\n in {0.09/3.38/Number of inodes\\ in FS/Block size,
+                           3.38/6.66/Number of blocks\\ in FS/Current mount\\ count,
+                           6.66/9.93/Number of\\ unallocated inode/Maximum mount\\ count,
+                           9.93/13.2/Number of\\ unallocated blocks/Size of each inode\\ structure} {
+    \draw[fill=bootc] (\l,2.85) rectangle (\r,3.6) node[midway, text=white, font=\scriptsize, align=center] {\t};
+    \draw[fill=bootc] (\l,2.1) rectangle (\r,2.85) node[midway, text=white, font=\scriptsize, align=center] {\n};
+  }
+  \draw[very thick] (0.09,2.1) rectangle (13.2,3.6);
+  \draw[arr] (5.03,1.68) -- (5.03,2.02); \draw[arr] (8.0,1.68) -- (8.04,2.02);
+  \node[font=\scriptsize] at (7.8,1.45) {A file system check (\code{fsck}) will be performed if the maximum mount count is reached.};
+\end{tikzpicture}
+\caption{The superblock of an ext2/3/4 file system (after slide 113).}
+\label{fig:superblock}
+\end{figure}
 
 A \emph{sector} is the unit in which the disk itself reads and writes, traditionally 512 bytes. When the number of FATs is 2, the second FAT is a backup of the first. When the mount count of an ext2/3/4 FS reaches the maximum mount count, a file system check (\code{fsck}, \Cref{sec:recovery}) is performed.
 
@@ -136,27 +304,24 @@ We have been talking about file systems. But where is the file system? What is o
   A \emph{disk partition} is a logical space that hosts a file system. The first sector of the disk, the \emph{master boot record} (MBR), contains boot code, which specifies which partition to boot, and a \emph{partition table}, which stores the first sector, the length, and the type of each partition.
 \end{definition}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}[x=1cm]
-  \draw[fill=dirc] (0,0) rectangle (0.3,0.8);
-  \node[font=\tiny, align=center] at (0.15,0.4) {C\\O\\D\\E};
-  \draw[fill=datac] (0.3,0) rectangle (0.8,0.8);
-  \draw[fill=freec] (0.8,0) rectangle (10,0.8);
-  \foreach \x in {3.8,6.8,8.3} \draw[densely dashed] (\x,-0.1) -- (\x,1.2);
-  \draw[densely dashed] (0.8,-0.1) -- (0.8,1.2); \draw[densely dashed] (10,-0.1) -- (10,1.2);
-  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (0.8,1.05) -- node[above, font=\scriptsize] {Partition 1} (3.8,1.05);
-  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (3.8,1.05) -- node[above, font=\scriptsize] {Partition 2} (6.8,1.05);
-  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (6.8,1.05) -- (8.3,1.05);
-  \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] (8.3,1.05) -- (10,1.05);
-  \draw[fill=bootc] (0.8,0) rectangle (1.4,0.8); \node[font=\tiny, text=white, align=center] at (1.1,0.4) {boot\\ sector};
-  \draw[fill=bootc] (3.8,0) rectangle (4.4,0.8); \node[font=\tiny, text=white, align=center] at (4.1,0.4) {super-\\ block};
-  \node[font=\scriptsize, align=left, anchor=north west] (mbr) at (-0.4,-0.4) {MBR boot code: which partition to boot};
-  \node[font=\scriptsize, align=left, anchor=north west] (pt) at (5.2,-0.4) {partition table: first sector, length,\\ and type of each partition};
-  \draw[arr] (mbr.north west) ++(0.55,0) -- (0.15,0);
-  \draw[arr] (pt.north west) to[out=150, in=-60] (0.55,0);
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \draw[fill=dirc] (0,0) rectangle (0.47,1.0);
+  \node[font=\tiny, align=center, inner sep=0pt] at (0.235,0.5) {C\\O\\D\\E};
+  \draw[fill=datac] (0.47,0) rectangle (1.29,1.0);
+  \draw[fill=freec] (1.29,0) rectangle (9.76,1.0);
+  \foreach \x in {1.29,4.47,7.65,8.82,9.76} \draw[densely dashed, thick] (\x,0) -- (\x,1.55);
+  \foreach \a/\b in {1.29/4.47, 4.47/7.65, 7.65/8.82, 8.82/9.76}
+    \draw[{Stealth[length=1.8mm]}-{Stealth[length=1.8mm]}, thick] (\a,1.36) -- (\b,1.36);
+  \node[font=\scriptsize, anchor=south] at (2.88,1.38) {Partition 1};
+  \node[font=\scriptsize, anchor=south] at (6.06,1.38) {Partition 2};
+  \node[font=\scriptsize, align=left, anchor=north east] at (-0.15,3.25) {\textcolor{sigc}{MBR (master boot record)}:\\ This code specifies\\ which partition to boot.};
+  \node[font=\scriptsize, align=left, anchor=north west] at (0.8,3.4) {A \textcolor{sigc}{partition table} stores\dots\\ - The first sector.\\ - The length and type of a partition.};
+  \draw[arr] (-0.82,2.2) -- (0.12,1.03);
+  \draw[arr] (1.49,2.32) -- (0.75,0.85);
 \end{tikzpicture}
-\caption{A disk with an MBR and partitions. Formatting partition 1 as FAT32 and partition 2 as ext4 writes a boot sector into one and a superblock into the other (after slides 115 and 117).}
+\caption{A disk with an MBR and partitions (after slide 115).}
 \label{fig:partitions}
 \end{figure}
 
@@ -168,5 +333,31 @@ Modern systems have replaced the MBR with the GPT (GUID partition table), as par
 \end{itemize}
 
 \begin{definition}[Formatting]
-  \emph{Formatting} a disk (more precisely, a partition) means creating and initializing a file system on it: writing an empty FAT and a boot sector, or an empty inode table, bitmaps, and a superblock. The tools are \code{format.exe} on DOS and Windows, \code{mkfs.fat}, \code{mkfs.ext2}, \code{mkfs.ext3}, \code{mkfs.ext4}, \dots{} on Linux, and \code{diskutil} on macOS.
+  \emph{Formatting} a disk (more precisely, a partition) means creating and initializing a file system on it (\Cref{fig:formatting}): writing an empty FAT and a boot sector, or an empty inode table, bitmaps, and a superblock. The tools are \code{format.exe} on DOS and Windows, \code{mkfs.fat}, \code{mkfs.ext2}, \code{mkfs.ext3}, \code{mkfs.ext4}, \dots{} on Linux, and \code{diskutil} on macOS.
 \end{definition}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm, bkg/.style={fill=usedc}, bkb/.style={fill=freec}, bko/.style={fill=dirc}]
+  \draw[fill=dirc] (0,0) rectangle (0.47,1.0);
+  \node[font=\tiny, align=center, inner sep=0pt] at (0.235,0.5) {C\\O\\D\\E};
+  \draw[fill=datac] (0.47,0) rectangle (1.29,1.0);
+  \foreach \s/\t in {1.29/Boot\\ sector, 4.47/Super-\\ block} {
+    \draw[fill=bootc] (\s,0) rectangle (\s+1.06,1.0);
+    \node[text=white, font=\scriptsize, align=center] at (\s+0.53,0.5) {\t};
+    \draw[fill=metac] (\s+1.06,0) rectangle (\s+2.12,1.0);
+    \foreach \c [count=\i from 0] in {b,b,o,g}
+      \draw[bk\c] ({\s+2.12+0.118*\i},0) rectangle ++(0.118,1.0);
+    \draw[fill=freec] (\s+2.59,0) rectangle (\s+3.06,1.0);
+    \draw[fill=freec] (\s+3.06,0) rectangle (\s+3.18,1.0);
+  }
+  \draw[fill=freec] (7.65,0) rectangle (9.76,1.0);
+  \foreach \x in {1.29,4.47,7.65,8.82,9.76} \draw[densely dashed, thick] (\x,0) -- (\x,1.55);
+  \foreach \a/\b in {1.29/4.47, 4.47/7.65, 7.65/8.82, 8.82/9.76}
+    \draw[{Stealth[length=1.8mm]}-{Stealth[length=1.8mm]}, thick] (\a,1.36) -- (\b,1.36);
+  \node[font=\scriptsize, anchor=south] at (2.88,1.38) {Partition 1};
+  \node[font=\scriptsize, anchor=south] at (6.06,1.38) {Partition 2};
+\end{tikzpicture}
+\caption{Formatting writes a file system into each partition: a boot sector into partition 1 and a superblock into partition 2 (after slide 117).}
+\label{fig:formatting}
+\end{figure}

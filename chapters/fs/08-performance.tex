@@ -1,13 +1,28 @@
 \section{File System Performance}
 \label{sec:fsperf}
 
+\definecolor{vqyel}{HTML}{FFFF66}   % disks in the cache figures
+
 \subsection{Data Fragmentation}
 
 \begin{definition}[Data Fragmentation]
   \emph{Data fragmentation} is the situation in which the allocated blocks of one file are scattered randomly over the disk. It is different from external fragmentation (the free space between allocated blocks) and internal fragmentation (the wasted space inside an allocated block), both from \Cref{sec:alloc}.
 \end{definition}
 
-Why does scattering matter? Some basics of the hard disk drive: data is stored sector by sector, magnetically, on spinning platters; a movable \emph{disk arm} carries a \emph{disk head} that reads and writes. One rotation of the platters under a stationary head retrieves a run of consecutive sectors. If the blocks of a file are packed together, in neighboring sectors, the head rarely moves; if they are scattered, it moves a lot.
+Why does scattering matter? Some basics of the hard disk drive: data is stored sector by sector, magnetically, on spinning platters; a movable \emph{disk arm} carries a \emph{disk head} that reads and writes. One rotation of the platters under a stationary head retrieves a run of consecutive sectors. If the blocks of a file are packed together, in neighboring sectors, the head rarely moves; if they are scattered, it moves a lot (\Cref{fig:datafrag}).
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=3.2mm]
+  \foreach \row/\y/\lab/\set in {a/0/(a)/{4,5,6,7,8,9,10,11}, b/-1.3/(b)/{1,3,6,8,12,15,17,19}} {
+    \node[font=\small, anchor=east] at (-1,\y+0.4) {\lab};
+    \draw[fill=freec] (0,\y) rectangle (21,\y+0.8);
+    \foreach \k in \set \draw[fill=usedc] (\k,\y) rectangle (\k+1,\y+0.8);
+  }
+\end{tikzpicture}
+\caption{The data blocks of a file (green) on the disk: (a) packed together, few disk head movements; (b) scattered, many disk head movements (after slide 200).}
+\label{fig:datafrag}
+\end{figure}
 
 \begin{keypoint}
   The number of disk head movements determines the time it takes to access a file.
@@ -17,9 +32,55 @@ The cause of data fragmentation is external fragmentation: deleting old data lea
 
 \subsection{The Buffer Cache}
 
-First of all, \emph{cache} is pronounced ``cash'', not ``catch''. In the computing world, the faster a device is, the more cash it costs: disks are cheaper than RAM, and RAM is cheaper than CPU registers. A cache is a temporary storage designed to save both time and cash.
+First of all, \emph{cache} is pronounced ``cash'', not ``catch''. In the computing world, the faster a device is, the more cash it costs: disks are cheaper than RAM, and RAM is cheaper than CPU registers. A cache is a temporary storage designed to save both time and cash (\Cref{fig:cachehier}).
 
-Suppose you expect a file to be accessed frequently, e.g., the root directory. To save disk access time you would like to keep it in memory at all times; that piece of memory is a cache. But you cannot afford a large RAM, so when the cache runs out of space, the root directory may have to be written back to disk to make room. Who decides when? The \emph{cache replacement algorithm}, controlled by the kernel.
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[lvl/.style={draw, fill=freec, minimum width=16mm, minimum height=7mm, font=\scriptsize}]
+  \node[lvl] (r) at (0,0) {Register};
+  \node[lvl] (m) at (0,-1.6) {Memory};
+  \node[lvl] (d) at (0,-3.2) {Disk};
+  \foreach \u/\v in {r/m, m/d} {
+    \draw[arr] ($(\u.south)+(0,-0.15)$) -- ($(\v.north)+(0,0.15)$);
+    \node[font=\scriptsize\itshape, align=left, anchor=west] at ($(\u.south)!0.5!(\v.north)+(0.1,0)$) {Decrease\\ in speed};
+  }
+\end{tikzpicture}
+\caption{The faster the device, the more it costs (after slide 203).}
+\label{fig:cachehier}
+\end{figure}
+
+Suppose you expect a file to be accessed frequently, e.g., the root directory. To save disk access time you would like to keep it in memory at all times; that piece of memory is a cache. But you cannot afford a large RAM, so when the cache runs out of space, the root directory may have to be written back to disk to make room. Who decides when? The \emph{cache replacement algorithm}, controlled by the kernel (\Cref{fig:cachereplace}).
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[cc/.style={draw, minimum width=5.5mm, minimum height=3mm, inner sep=0pt},
+                    cy/.style={draw, cylinder, shape border rotate=90, aspect=0.3, fill=vqyel, minimum width=8.5mm, minimum height=8mm}]
+  % \cache{x}{y}{fill1,fill2,fill3}
+  \newcommand{\cache}[3]{\foreach \c [count=\i from 0] in {#3} \node[cc, fill=\c] at (#1+0.55*\i,#2) {};}
+  \node[font=\scriptsize, anchor=east] at (-0.45,0) {Cache};
+  \cache{0}{0}{usedc,usedc,metac}
+  \cache{3.0}{0}{usedc,usedc,usedc}
+  \cache{5.9}{0}{usedc,usedc,usedc}
+  \node[cy] (d1) at (0.55,-1.2) {};
+  \node[cy] (d2) at (3.35,-1.2) {};
+  \node[cy] (d3) at (6.4,-1.2) {};
+  \node[font=\scriptsize, anchor=east] at (0.05,-1.45) {Disk};
+  \draw[arr] (d1.north) -- (0.55,-0.2) node[midway, left, font=\scriptsize] {Read};
+  \draw[arr] (d2.north) ++(0.1,0) -- (4.05,-0.2) node[midway, left, font=\scriptsize] {Read};
+  \draw[arr] (d3.north) ++(0.1,0) .. controls (6.75,-0.3) and (7.25,-0.25) .. (7.0,-0.5) .. controls (6.75,-0.7) and (6.7,-0.25) .. (7.35,-0.22);
+  \node[font=\scriptsize, align=left, anchor=north west] at (7.2,-0.45) {Read\dots\\ But \emph{where to write?}};
+  \draw[densely dotted, thick] (-1.6,-1.95) -- (10.6,-1.95);
+  \node[font=\scriptsize, anchor=north east] at (10.6,-2.05) {The \textcolor{sigc}{cache replacement algorithm} takes place.};
+  \cache{0}{-2.75}{metac,usedc,usedc}
+  \cache{3.0}{-2.75}{metac,usedc,usedc}
+  \node[cy] (d4) at (0.55,-4.0) {};
+  \node[cy] (d5) at (3.35,-4.0) {};
+  \draw[arr] (0,-2.95) -- (0.3,-3.5) node[midway, left, font=\scriptsize] {Write back to disk};
+  \draw[arr] (3.25,-3.5) -- (3.0,-2.95) node[midway, right, font=\scriptsize] {Read};
+\end{tikzpicture}
+\caption{Cache replacement: once the cache is full, an item must be written back to the disk to make room for a new one (after slide 205).}
+\label{fig:cachereplace}
+\end{figure}
 
 \begin{definition}[Buffer Cache]
   The \emph{buffer cache} (or \emph{block cache}) holds everything related to the file system that is read from the disk: inodes, (parts of) the FAT, directory entries, and data blocks. When a disk access finishes (the \emph{primary copy} is on disk), the data is kept in kernel-space memory as a \emph{secondary copy}; a later read of the same data is served from that copy without any disk access. The data stays in the cache even after the corresponding file is closed.
@@ -56,17 +117,45 @@ When someone writes data that is cached, there are two approaches.
 \end{definition}
 
 \begin{example}[LRU]
-  The cache holds eight items, sorted by age:
-  \begin{center}
-  \small
-  \begin{tabular}{l*{8}{c}}
-    \toprule
-    Initially & A:0 & B:2 & C:3 & D:4 & E:6 & F:8 & G:9 & H:11 \\
-    Read H (hit) & H:0 & A:1 & B:3 & C:4 & D:5 & E:7 & F:9 & G:10 \\
-    Read Z (miss) & Z:0 & H:1 & A:2 & B:4 & C:5 & D:6 & E:8 & F:10 \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
+  The cache holds eight items, sorted by age (\Cref{fig:lru}):
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[ag/.style={draw, fill=rowc, minimum width=6mm, minimum height=4.5mm, inner sep=0pt, font=\scriptsize},
+                    ct/.style={ag, fill=metac},
+                    st/.style={draw, font=\scriptsize, inner sep=2pt}]
+  % \lru{y}{ages}{contents}
+  \newcommand{\lru}[3]{%
+    \foreach \v [count=\i from 0] in {#2} \node[ag] at (0.6*\i,#1) {\v};
+    \foreach \v [count=\i from 0] in {#3} \node[ct] at (0.6*\i,#1-0.45) {\v};}
+  % (a) initially
+  \node[font=\small, anchor=east] at (-2.3,-0.22) {(a)};
+  \lru{0}{0,2,3,4,6,8,9,11}{A,B,C,D,E,F,G,H}
+  \node[font=\scriptsize, anchor=east] (la) at (-0.9,0.05) {Age};
+  \node[font=\scriptsize, anchor=east] (lc) at (-0.9,-0.5) {Content};
+  \draw[arr] (la.east) -- (-0.4,0);
+  \draw[arr] (lc.east) -- (-0.4,-0.42);
+  \draw[sigc, thick] (3.85,0.32) rectangle (4.55,-0.77);
+  \node[callout, draw=sigc, thick, ellipse, inner sep=1pt] (cb) at (6.6,0.75) {The least recently\\ used (oldest) item.};
+  \fill[white] (cb.196) -- (4.62,0.2) -- (cb.226) -- cycle;
+  \draw[sigc, thick] (cb.194) -- (4.62,0.2) -- (cb.228);
+  % (b) read H: a hit
+  \begin{scope}[yshift=-1.6cm]
+    \node[font=\small, anchor=east] at (-2.3,-0.6) {(b)};
+    \foreach \t [count=\i from 0] in {A read system call requires item H., The age of item H is changed to zero., The ages of other items are incremented by one., Sort the items.}
+      \node[st] at (2.1,-0.5*\i) {\t};
+    \lru{-2.15}{0,1,3,4,5,7,9,10}{H,A,B,C,D,E,F,G}
+  \end{scope}
+  % (c) read Z: a miss
+  \begin{scope}[yshift=-5.1cm]
+    \node[font=\small, anchor=east] at (-2.3,-0.6) {(c)};
+    \foreach \t [count=\i from 0] in {A read system call requires item Z. This results in a cache miss., Search and find that item G is the oldest item. Write it back to disk., Write item Z to the cache., Update the ages and sort the items.}
+      \node[st] at (2.1,-0.5*\i) {\t};
+    \lru{-2.15}{0,1,2,4,5,6,8,10}{Z,H,A,B,C,D,E,F}
+  \end{scope}
+\end{tikzpicture}
+\caption{LRU replacement: (a) the cache sorted by age, with the least recently used item at the end; (b) reading H, a cache hit; (c) reading Z, a cache miss that evicts G (after slides 209--212).}
+\label{fig:lru}
+\end{figure}
   Reading H, the oldest item, makes it the youngest. Reading Z misses; the cache is full, so the oldest item, G, is evicted, the remaining ages are incremented, and Z enters with age 0.
 \end{example}
 

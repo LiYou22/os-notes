@@ -1,4 +1,4 @@
-\section{Allocating Space for Files}
+\section{File System Design: Allocating Space for Files}
 \label{sec:alloc}
 
 \subsection{What a File System Is About}
@@ -24,118 +24,504 @@ Suppose you are the FS controller and you are given an empty 100\,GB hard disk. 
 
 \subsection{Attempt 1: Write Files One After Another}
 
-Scan from byte 0; at the next empty space, start writing the new file there. This is not cool at all.
+Scan from byte 0; at the next empty space, start writing the new file there (\Cref{fig:attempt1}). This is not cool at all.
 \begin{itemize}
   \item Retrieving data is extremely slow: to find a file, the FS must scan the disk from the beginning.
   \item Deleting a file leaves a \emph{hole}, and since nothing records where files end, writing a new file into the hole may overwrite the file that follows it.
 \end{itemize}
 
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  % (a) files written one after another
+  \begin{scope}[xscale=0.68]
+  \node[font=\small, anchor=east] at (-0.3,0) {(a)};
+  \foreach \x/\n in {0/A, 1.8/B, 3.6/C} {
+    \draw[fill=usedc] (\x,-0.35) rectangle ++(1.8,0.7);
+    \node[font=\scriptsize\ttfamily] at (\x+0.9,0) {\n};
+  }
+  \draw[fill=freec] (5.4,-0.35) rectangle (9,0.35);
+  \node[font=\scriptsize, anchor=north] at (0,-0.35) {0};
+  \node[font=\scriptsize, anchor=north] at (9,-0.35) {100\,GB};
+  \draw[arr] (5.4,0.75) -- (5.4,0.38);
+  \node[font=\scriptsize, anchor=west] at (5.5,0.6) {next empty space};
+  \end{scope}
+  % (b) a new file written into the hole left by B
+  \begin{scope}[xshift=7.9cm, xscale=0.68]
+    \node[font=\small, anchor=east] at (-0.3,0) {(b)};
+    \draw[fill=usedc] (0,-0.35) rectangle ++(1.8,0.7); \node[font=\scriptsize\ttfamily] at (0.9,0) {A};
+    \draw[fill=freec] (1.8,-0.35) rectangle ++(1.8,0.7); \node[font=\scriptsize\itshape] at (2.7,0) {hole};
+    \draw[fill=usedc] (3.6,-0.35) rectangle ++(1.8,0.7); \node[font=\scriptsize\ttfamily] at (4.5,0) {C};
+    \draw[sigc, thick] (3.6,-0.35) -- (5.4,0.35) (3.6,0.35) -- (5.4,-0.35);
+    \draw[fill=freec] (5.4,-0.35) rectangle (9,0.35);
+    \draw[fill=jobB] (1.8,0.85) rectangle (4.8,1.35); \node[font=\scriptsize\ttfamily] at (3.3,1.1) {new file D};
+    \draw[arr] (1.8,0.85) -- (1.8,0.38);
+    \draw[arr] (4.8,0.85) -- (4.8,0.38);
+    \node[font=\scriptsize, sigc, anchor=north] at (4.5,-0.35) {overwritten};
+    \node[font=\scriptsize, anchor=north] at (0,-0.35) {0};
+    \node[font=\scriptsize, anchor=north] at (9,-0.35) {100\,GB};
+  \end{scope}
+\end{tikzpicture}
+\caption{Attempt 1: (a) files written one after another; (b) a file written into a hole overwrites the next one (after slides 56--58).}
+\label{fig:attempt1}
+\end{figure}
+
 \subsection{Attempt 2: Contiguous Allocation with a File System Table}
 
-Keep a table, the \emph{file system table}, that records the starting and ending addresses of all files (\Cref{fig:contig}). Now the FS can quickly search for any file and quickly find the next empty space (in \Cref{fig:contig}, a sequential search of the table finds that 2001 is free). The table also shows the holes, so the overwriting problem is gone.
+Keep a table, the \emph{file system table}, that records the starting and ending addresses of all files (\Cref{fig:contig}). Files are still stored contiguously, but the table fixes both problems of Attempt 1:
+\begin{itemize}
+  \item \emph{Searching is fast.} To find a file, the FS looks it up in the small table instead of scanning the disk. Finding the next empty space is also a search of the table: in \Cref{fig:contig}(a), the last file ends at 3456, so 3457 is the next empty space.
+  \item \emph{Deletion no longer causes overwriting.} Since the table records where every file starts and ends, it also shows the holes between them: in \Cref{fig:contig}(b), \code{rock.mp3} ends at 2000 and \code{game.exe} starts at 5000, so 2001--4999 is a hole. A new file is put into a hole only if it fits, so it never runs over the next file.
+\end{itemize}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}[x=1cm]
-  \node[blk, fill=metac, minimum width=12mm, align=center, font=\tiny] at (0.6,0) {FS table};
-  \draw[fill=usedc] (1.2,-0.35) rectangle (4.0,0.35); \node[font=\scriptsize] at (2.6,0) {rock.mp3};
-  \draw[fill=freec] (4.0,-0.35) rectangle (6.2,0.35); \node[font=\scriptsize] at (5.1,0) {hole};
-  \draw[fill=dirc!70] (6.2,-0.35) rectangle (7.6,0.35); \node[font=\scriptsize] at (6.9,0) {game.exe};
-  \draw[fill=freec] (7.6,-0.35) rectangle (12,0.35);
-  \node[font=\scriptsize, anchor=north] at (1.2,-0.35) {0};
-  \node[font=\scriptsize, anchor=north] at (12,-0.35) {100\,GB};
-  \begin{scope}[yshift=1.6cm]
-    \node[hcell, minimum width=16mm] (h1) at (2,0) {Filename};
-    \node[hcell, minimum width=14mm, right=0pt of h1] (h2) {Start};
-    \node[hcell, minimum width=14mm, right=0pt of h2] (h3) {End};
-    \foreach \f/\s/\e [count=\i] in {rock.mp3/0/2000, game.exe/5000/5678} {
-      \node[cell, minimum width=16mm, font=\scriptsize\ttfamily] (a\i) at (2,-0.5*\i) {\f};
-      \node[cell, minimum width=14mm, right=0pt of a\i] (b\i) {\s};
-      \node[cell, minimum width=14mm, right=0pt of b\i] (c\i) {\e};
-    }
+\begin{tikzpicture}[x=1.5cm, y=1cm]
+  % (a)
+  \begin{scope}[yshift=0cm]
+    \node[font=\small, anchor=east] at (-0.25,0.5) {(a)};
+    \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+    \draw[fill=usedc] (1,0) rectangle (2,1.0);
+    \draw[fill=usedc] (2,0) rectangle (3,1.0);
+    \draw[fill=usedc] (3,0) rectangle (4,1.0);
+    \draw[fill=usedc] (4,0) rectangle (5,1.0);
+    \draw[fill=freec] (5,0) rectangle (5.6,1.0);
+    \node[font=\scriptsize, anchor=north] at (0,0) {0};
+    \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+    \draw[fill=kernc] (0.1,2.2) rectangle (1.05,3.0); \node[text=white, font=\scriptsize\bfseries, align=center] at (0.575,2.6) {Filename};
+    \draw[fill=kernc] (1.05,2.2) rectangle (2.0,3.0); \node[text=white, font=\scriptsize\bfseries, align=center] at (1.525,2.6) {Starting\\address};
+    \draw[fill=kernc] (2.0,2.2) rectangle (2.95,3.0); \node[text=white, font=\scriptsize\bfseries, align=center] at (2.475,2.6) {Ending\\address};
+    \draw[fill=jobB] (0.1,1.8) rectangle (1.05,2.2); \node[font=\scriptsize] at (0.575,2.0) {rock.mp3};
+    \draw[fill=jobB] (1.05,1.8) rectangle (2.0,2.2); \node[font=\scriptsize] at (1.525,2.0) {0};
+    \draw[fill=jobB] (2.0,1.8) rectangle (2.95,2.2); \node[font=\scriptsize] at (2.475,2.0) {2000};
+    \draw[fill=jobB] (0.1,1.4) rectangle (1.05,1.8); \node[font=\scriptsize] at (0.575,1.6) {sweet.jpg};
+    \draw[fill=jobB] (1.05,1.4) rectangle (2.0,1.8); \node[font=\scriptsize] at (1.525,1.6) {2001};
+    \draw[fill=jobB] (2.0,1.4) rectangle (2.95,1.8); \node[font=\scriptsize] at (2.475,1.6) {3456};
+    \draw[densely dotted] (0.1,1.4) -- (0,1.0) (2.95,1.4) -- (1,1.0);
+    \draw[-{Triangle[length=2.4mm, width=3.6mm]}, line width=2.2pt, sigc] (-0.45,2.0) -- (0.05,2.0);
+    \node[font=\scriptsize, anchor=east] at (-0.5,2.0) {Run a sequential search.};
+    \draw[sigc, very thick] (2.0,1.4) rectangle (2.95,1.8);
+    \draw[arr, sigc] (3.5,1.6) -- (3.0,1.6);
+    \node[font=\scriptsize, anchor=west] at (3.55,1.6) {3457 will be the next empty space.};
   \end{scope}
-  \node[callout, anchor=west] at (7.2,1.2) {A hole is detected\\ from 2001 to 4999.};
-  \node[callout, anchor=north, fill=jobA!40] at (9.8,-0.6) {a new large file\\ fits in no hole};
+  % (b)
+  \begin{scope}[yshift=-3.7cm]
+    \node[font=\small, anchor=east] at (-0.25,0.5) {(b)};
+    \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+    \draw[fill=usedc] (1,0) rectangle (2,1.0);
+    \draw[fill=freec] (2,0) rectangle (4,1.0);
+    \draw[fill=usedc] (4,0) rectangle (5,1.0);
+    \draw[fill=freec] (5,0) rectangle (5.6,1.0);
+    \node[font=\scriptsize, anchor=north] at (0,0) {0};
+    \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+    \draw[fill=kernc] (0.1,2.2) rectangle (1.05,3.0); \node[text=white, font=\scriptsize\bfseries, align=center] at (0.575,2.6) {Filename};
+    \draw[fill=kernc] (1.05,2.2) rectangle (2.0,3.0); \node[text=white, font=\scriptsize\bfseries, align=center] at (1.525,2.6) {Starting\\address};
+    \draw[fill=kernc] (2.0,2.2) rectangle (2.95,3.0); \node[text=white, font=\scriptsize\bfseries, align=center] at (2.475,2.6) {Ending\\address};
+    \draw[fill=jobB] (0.1,1.8) rectangle (1.05,2.2); \node[font=\scriptsize] at (0.575,2.0) {rock.mp3};
+    \draw[fill=jobB] (1.05,1.8) rectangle (2.0,2.2); \node[font=\scriptsize] at (1.525,2.0) {0};
+    \draw[fill=jobB] (2.0,1.8) rectangle (2.95,2.2); \node[font=\scriptsize] at (2.475,2.0) {2000};
+    \draw[fill=jobB] (0.1,1.4) rectangle (1.05,1.8); \node[font=\scriptsize] at (0.575,1.6) {game.exe};
+    \draw[fill=jobB] (1.05,1.4) rectangle (2.0,1.8); \node[font=\scriptsize] at (1.525,1.6) {5000};
+    \draw[fill=jobB] (2.0,1.4) rectangle (2.95,1.8); \node[font=\scriptsize] at (2.475,1.6) {5678};
+    \draw[densely dotted] (0.1,1.4) -- (0,1.0) (2.95,1.4) -- (1,1.0);
+    \draw[decorate, decoration={brace, amplitude=4pt}, sigc, thick] (3.05,2.2) -- (3.05,1.4);
+    \node[font=\scriptsize, anchor=west] at (3.25,1.8) {A hole is detected from 2001 to 4999.};
+  \end{scope}
+  % (c)
+  \begin{scope}[yshift=-6.3cm]
+    \node[font=\small, anchor=east] at (-0.25,0.5) {(c)};
+    \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+    \draw[fill=usedc] (1,0) rectangle (2,1.0);
+    \draw[fill=freec] (2,0) rectangle (4,1.0);
+    \draw[fill=usedc] (4,0) rectangle (5,1.0);
+    \draw[fill=freec] (5,0) rectangle (5.6,1.0);
+    \node[font=\scriptsize, anchor=north] at (0,0) {0};
+    \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+    \draw[fill=usedc] (2,1.4) rectangle (4.2,1.95);
+    \draw[sigc, thick] (2,1.4) -- (4.2,1.95) (2,1.95) -- (4.2,1.4);
+    \draw[arr] (2,1.4) -- (2,1.03);
+    \draw[arr] (4.2,1.4) -- (4.2,1.03);
+    \node[font=\scriptsize, anchor=west] at (4.4,1.67) {Can't be written!};
+  \end{scope}
 \end{tikzpicture}
-\caption{Contiguous allocation: the file system table records where each file starts and ends, which exposes the holes, but a large file may still fit in no single hole (after slides 59--62).}
+\caption{Attempt 2: (a) the next empty space is found by searching the table; (b) the table exposes the holes; (c) a large file fits in no single hole (after slides 59--62).}
 \label{fig:contig}
 \end{figure}
 
-Better, but not good enough: free space is not used wisely.
+Better, but not good enough: free space is not used wisely. Because a file must occupy one contiguous range, a new file needs a \emph{single} hole that is large enough. In \Cref{fig:contig}(c), neither the hole 2001--4999 nor the free space at the end can take the new file, so it cannot be written, even though there is actually enough free space on the disk.
 
 \begin{definition}[External Fragmentation]
   \emph{External fragmentation} is the situation in which the allocated space is fragmented into chunks with many holes in between, so that a large file may find no suitable hole even though the total free space is enough.
 \end{definition}
 
 \begin{definition}[Defragmentation]
-  \emph{Defragmentation} packs the files sequentially again: the allocated space moves to the front of the disk, the free space to the end, and the file system table is rewritten.
+  \emph{Defragmentation} packs the files sequentially again: the allocated space moves to the front of the disk, the free space to the end, and the file system table is rewritten (\Cref{fig:defrag}).
 \end{definition}
 
-Defragmentation is very expensive: it may involve every file on the disk, so it is very slow, and the disk is unavailable while it runs. And there is one more issue: if a file wants to grow but there is no empty space adjacent to it, the solution (moving the file, or its neighbors) is again very expensive.
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1.5cm, y=1cm]
+  \begin{scope}[yshift=0cm]
+    \node[font=\small, anchor=east] at (-0.3,0.5) {(a)};
+    \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+    \draw[fill=usedc] (1,0) rectangle (2,1.0);
+    \draw[fill=freec] (2,0) rectangle (4,1.0);
+    \draw[fill=usedc] (4,0) rectangle (5,1.0);
+    \draw[fill=freec] (5,0) rectangle (5.6,1.0);
+    \node[font=\scriptsize, anchor=north] at (0,0) {0};
+    \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+    \draw[fill=usedc] (2,1.4) rectangle (4.2,1.95);
+    \draw[arr] (2,1.4) -- (2,1.03);
+    \draw[arr] (4.2,1.4) -- (4.2,1.03);
+    \draw[arr, sigc] (3.9,0.4) -- (2.6,0.4);
+    \node[font=\scriptsize, sigc, anchor=south] at (3.4,0.42) {Move};
+  \end{scope}
+  \begin{scope}[yshift=-2.6cm]
+    \node[font=\small, anchor=east] at (-0.3,0.5) {(b)};
+    \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+    \draw[fill=usedc] (1,0) rectangle (2,1.0);
+    \draw[fill=usedc] (2,0) rectangle (3,1.0);
+    \draw[fill=freec] (3,0) rectangle (5.6,1.0);
+    \node[font=\scriptsize, anchor=north] at (0,0) {0};
+    \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+    \draw[fill=usedc] (3,1.4) rectangle (5.2,1.95);
+    \draw[arr] (3,1.4) -- (3,1.03);
+    \draw[arr] (5.2,1.4) -- (5.2,1.03);
+    \node[callout, anchor=west] (cb) at (6.0,1.75) {Enough space for\\ the new file now.};
+    \draw (cb.west) -- (5.25,1.5);
+  \end{scope}
+\end{tikzpicture}
+\caption{Defragmentation: (a) the files are moved to the front of the disk; (b) the free space is now one hole, large enough for the new file (after slides 63--64).}
+\label{fig:defrag}
+\end{figure}
+
+Defragmentation is very expensive: it may involve every file on the disk, so it is very slow, and the disk is unavailable while it runs.
+
+And there is one more issue: what if a file wants to grow, but there is no empty space adjacent to it (\Cref{fig:grow})? The solution, moving the file or its neighbors, is again very expensive.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1.5cm, y=1cm]
+  \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+  \draw[fill=usedc] (1,0) rectangle (2,1.0);
+  \draw[fill=usedc] (2,0) rectangle (3,1.0);
+  \draw[fill=usedc] (3,0) rectangle (5.2,1.0);
+  \draw[fill=freec] (5.2,0) rectangle (5.6,1.0);
+  \node[font=\scriptsize, anchor=north] at (0,0) {0};
+  \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+  \node[font=\scriptsize, anchor=south] (more) at (2.5,1.55) {More data comes};
+  \draw[arr] (more.south) -- (2.5,0.6);
+  \node[font=\scriptsize, sigc, align=left, anchor=west] at (5.8,0.5) {no free space\\ next to it};
+\end{tikzpicture}
+\caption{A file in the middle needs to grow, but its neighbors leave no room (after slide 65).}
+\label{fig:grow}
+\end{figure}
 
 This scheme is called \emph{contiguous allocation}. It is the best choice when no file will ever be deleted and all file sizes are fixed. A real-life example: CD-ROMs, whose ISO~9660 and Joliet file systems are written once.
 
 \subsection{Attempt 3: Blocks}
 
-To improve on contiguous allocation:
+Contiguous allocation fails because a file must occupy one unbroken range of the disk. Attempt 3 drops that requirement:
 \begin{enumerate}
   \item break all allocated and empty space into small, equal-sized \emph{blocks};
   \item break the new file into blocks too;
-  \item fill the new file into the empty space block by block.
+  \item fill the new file into the empty space block by block (\Cref{fig:blocks}).
 \end{enumerate}
-Now the new file fits into the available empty space no matter how it is scattered. The price is that each file may have multiple starting and ending addresses. How should the file system table record them?
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1.5cm, y=1cm]
+  \begin{scope}[yshift=0cm]
+    \node[font=\small, anchor=east] at (-0.25,0.5) {(a)};
+    \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+    \draw[fill=usedc] (1.0000,0) rectangle (1.1533,1.0);
+    \draw[fill=usedc] (1.1533,0) rectangle (1.3067,1.0);
+    \draw[fill=usedc] (1.3067,0) rectangle (1.4600,1.0);
+    \draw[fill=usedc] (1.4600,0) rectangle (1.6133,1.0);
+    \draw[fill=usedc] (1.6133,0) rectangle (1.7667,1.0);
+    \draw[fill=usedc] (1.7667,0) rectangle (1.9200,1.0);
+    \draw[fill=usedc] (1.9200,0) rectangle (2.0733,1.0);
+    \draw[fill=freec] (2.0733,0) rectangle (2.2267,1.0);
+    \draw[fill=freec] (2.2267,0) rectangle (2.3800,1.0);
+    \draw[fill=freec] (2.3800,0) rectangle (2.5333,1.0);
+    \draw[fill=freec] (2.5333,0) rectangle (2.6867,1.0);
+    \draw[fill=freec] (2.6867,0) rectangle (2.8400,1.0);
+    \draw[fill=freec] (2.8400,0) rectangle (2.9933,1.0);
+    \draw[fill=freec] (2.9933,0) rectangle (3.1467,1.0);
+    \draw[fill=freec] (3.1467,0) rectangle (3.3000,1.0);
+    \draw[fill=freec] (3.3000,0) rectangle (3.4533,1.0);
+    \draw[fill=freec] (3.4533,0) rectangle (3.6067,1.0);
+    \draw[fill=freec] (3.6067,0) rectangle (3.7600,1.0);
+    \draw[fill=freec] (3.7600,0) rectangle (3.9133,1.0);
+    \draw[fill=freec] (3.9133,0) rectangle (4.0667,1.0);
+    \draw[fill=usedc] (4.0667,0) rectangle (4.2200,1.0);
+    \draw[fill=usedc] (4.2200,0) rectangle (4.3733,1.0);
+    \draw[fill=usedc] (4.3733,0) rectangle (4.5267,1.0);
+    \draw[fill=usedc] (4.5267,0) rectangle (4.6800,1.0);
+    \draw[fill=usedc] (4.6800,0) rectangle (4.8333,1.0);
+    \draw[fill=usedc] (4.8333,0) rectangle (4.9867,1.0);
+    \draw[fill=usedc] (4.9867,0) rectangle (5.1400,1.0);
+    \draw[fill=freec] (5.1400,0) rectangle (5.2933,1.0);
+    \draw[fill=freec] (5.2933,0) rectangle (5.4467,1.0);
+    \draw[fill=freec] (5.4467,0) rectangle (5.6000,1.0);
+    \node[font=\scriptsize, anchor=north] at (0,0) {0};
+    \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+    \draw[fill=usedc] (2.0733,1.4) rectangle (2.2267,1.95);
+    \draw[fill=usedc] (2.2267,1.4) rectangle (2.3800,1.95);
+    \draw[fill=usedc] (2.3800,1.4) rectangle (2.5333,1.95);
+    \draw[fill=usedc] (2.5333,1.4) rectangle (2.6867,1.95);
+    \draw[fill=usedc] (2.6867,1.4) rectangle (2.8400,1.95);
+    \draw[fill=usedc] (2.8400,1.4) rectangle (2.9933,1.95);
+    \draw[fill=usedc] (2.9933,1.4) rectangle (3.1467,1.95);
+    \draw[fill=usedc] (3.1467,1.4) rectangle (3.3000,1.95);
+    \draw[fill=usedc] (3.3000,1.4) rectangle (3.4533,1.95);
+    \draw[fill=usedc] (3.4533,1.4) rectangle (3.6067,1.95);
+    \draw[fill=usedc] (3.6067,1.4) rectangle (3.7600,1.95);
+    \draw[fill=usedc] (3.7600,1.4) rectangle (3.9133,1.95);
+    \draw[fill=usedc] (3.9133,1.4) rectangle (4.0667,1.95);
+    \draw[fill=usedc] (4.0667,1.4) rectangle (4.2200,1.95);
+    \draw[fill=usedc] (4.2200,1.4) rectangle (4.3733,1.95);
+    \draw[arr] (2.0733,1.4) -- (2.0733,1.03);
+    \draw[arr] (4.3733,1.4) -- (4.3733,1.03);
+  \end{scope}
+  \begin{scope}[yshift=-2.8cm]
+    \node[font=\small, anchor=east] at (-0.25,0.5) {(b)};
+    \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+    \draw[fill=usedc] (1.0000,0) rectangle (1.1533,1.0);
+    \draw[fill=usedc] (1.1533,0) rectangle (1.3067,1.0);
+    \draw[fill=usedc] (1.3067,0) rectangle (1.4600,1.0);
+    \draw[fill=usedc] (1.4600,0) rectangle (1.6133,1.0);
+    \draw[fill=usedc] (1.6133,0) rectangle (1.7667,1.0);
+    \draw[fill=usedc] (1.7667,0) rectangle (1.9200,1.0);
+    \draw[fill=usedc] (1.9200,0) rectangle (2.0733,1.0);
+    \draw[fill=dirc] (2.0733,0) rectangle (2.2267,1.0);
+    \draw[fill=dirc] (2.2267,0) rectangle (2.3800,1.0);
+    \draw[fill=dirc] (2.3800,0) rectangle (2.5333,1.0);
+    \draw[fill=dirc] (2.5333,0) rectangle (2.6867,1.0);
+    \draw[fill=dirc] (2.6867,0) rectangle (2.8400,1.0);
+    \draw[fill=dirc] (2.8400,0) rectangle (2.9933,1.0);
+    \draw[fill=dirc] (2.9933,0) rectangle (3.1467,1.0);
+    \draw[fill=dirc] (3.1467,0) rectangle (3.3000,1.0);
+    \draw[fill=dirc] (3.3000,0) rectangle (3.4533,1.0);
+    \draw[fill=dirc] (3.4533,0) rectangle (3.6067,1.0);
+    \draw[fill=dirc] (3.6067,0) rectangle (3.7600,1.0);
+    \draw[fill=dirc] (3.7600,0) rectangle (3.9133,1.0);
+    \draw[fill=dirc] (3.9133,0) rectangle (4.0667,1.0);
+    \draw[fill=usedc] (4.0667,0) rectangle (4.2200,1.0);
+    \draw[fill=usedc] (4.2200,0) rectangle (4.3733,1.0);
+    \draw[fill=usedc] (4.3733,0) rectangle (4.5267,1.0);
+    \draw[fill=usedc] (4.5267,0) rectangle (4.6800,1.0);
+    \draw[fill=usedc] (4.6800,0) rectangle (4.8333,1.0);
+    \draw[fill=usedc] (4.8333,0) rectangle (4.9867,1.0);
+    \draw[fill=usedc] (4.9867,0) rectangle (5.1400,1.0);
+    \draw[fill=dirc] (5.1400,0) rectangle (5.2933,1.0);
+    \draw[fill=dirc] (5.2933,0) rectangle (5.4467,1.0);
+    \draw[fill=freec] (5.4467,0) rectangle (5.6000,1.0);
+    \node[font=\scriptsize, anchor=north] at (0,0) {0};
+    \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+    \draw[arr] (2.0733,1.35) -- (2.0733,1.03); \draw[arr] (4.0667,1.35) -- (4.0667,1.03);
+    \draw[decorate, decoration={brace, amplitude=4pt}, thick] (2.0733,1.35) -- coordinate[midway, yshift=5pt] (br7) (4.0667,1.35);
+    \draw[arr] (5.1400,1.35) -- (5.1400,1.03); \draw[arr] (5.4467,1.35) -- (5.4467,1.03);
+    \draw[decorate, decoration={brace, amplitude=4pt}, thick] (5.1400,1.35) -- coordinate[midway, yshift=5pt] (br27) (5.4467,1.35);
+    \node[font=\scriptsize] (nf) at (4.6,2.2) {The new file};
+    \draw[arr] (nf.west) -- ([yshift=2pt]br7); \draw[arr] (nf.east) -- ([yshift=2pt]br27);
+  \end{scope}
+\end{tikzpicture}
+\caption{Attempt 3: (a) the disk and the new file are broken into equal-sized blocks; (b) the new file fills the empty blocks, wherever they are (after slides 67--68).}
+\label{fig:blocks}
+\end{figure}
+Now a new file can use whatever free space there is, however scattered. The price is that a file no longer has one starting and one ending address but many, so the file system table needs a new way to record where the pieces of each file are. Attempts 3.1 and 3.2 are two answers.
 
 \subsubsection{Attempt 3.1: a linked list of blocks}
-Organize each file as a linked list of data blocks: the file system table records each file's starting block, and every block stores the number of the next block (or NULL at the end). Free space is organized as a linked list too, whose start is also recorded in the table.
+The simplest answer is a linked list. The file system table records only the first block of each file, and every block stores the number of the next block, with NULL in the last one. Free space is kept the same way, as one more linked list whose first block is also recorded in the table (\Cref{fig:linked}).
 
-\emph{Pros.} It is easy to implement, since a pointer is just the ID or address of the next block. The file system table is smaller than with contiguous allocation (one number per file). There is no external fragmentation, files can grow and shrink, and free space is well organized.
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1.5cm, y=1cm,
+  lldisk/.pic={
+    \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+    \foreach \c [count=\i from 0] in {usedc,usedc,usedc,usedc,usedc,usedc,usedc,
+        dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,
+        usedc,usedc,usedc,usedc,usedc,usedc,usedc,dirc,dirc} {
+      \draw[fill=\c] ({1+\i*4.6/30},0) rectangle ({1+(\i+1)*4.6/30},0.71);
+      \draw[fill=jobB] ({1+\i*4.6/30},0.71) rectangle ({1+(\i+1)*4.6/30},1.0);
+    }
+    \draw[fill=freec] (5.4467,0) rectangle (5.6,1.0);
+    \node[font=\scriptsize, anchor=north] at (0,0) {0};
+    \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+  },
+  fst/.pic={
+    \draw[fill=bootc] (-0.75,2.6) rectangle (0.2,3.4); \node[text=white, font=\scriptsize\bfseries] at (-0.275,3.0) {Filename};
+    \draw[fill=bootc] (0.2,2.6) rectangle (1.15,3.4); \node[text=white, font=\scriptsize\bfseries, align=center] at (0.675,3.0) {Starting\\block \#};
+    \foreach \f/\s/\y in {rock.mp3/0/2.2, sweet.jpg/123/1.8, new.exe/80/1.4} {
+      \draw[fill=jobB] (-0.75,\y) rectangle (0.2,\y+0.4); \node[font=\scriptsize] at (-0.275,\y+0.2) {\f};
+      \draw[fill=jobB] (0.2,\y) rectangle (1.15,\y+0.4); \node[font=\scriptsize] at (0.675,\y+0.2) {\s};
+    }
+    \draw[densely dotted] (-0.75,1.4) -- (0,1.0) (1.15,1.4) -- (1,1.0);
+  }]
+  % (a) the files
+  \begin{scope}[yshift=0cm]
+    \node[font=\small, anchor=east] at (-0.25,0.5) {(a)};
+    \pic {lldisk};
+    \pic {fst};
+    \draw[very thick] (-0.75,1.4) rectangle (1.15,3.4);
+    \draw[fill=dirc] (2.0733,1.45) rectangle (2.2267,1.95); \draw[fill=jobB] (2.0733,1.95) rectangle (2.2267,2.25);
+    \draw (2.2267,1.45) rectangle (3.76,1.95) (2.2267,1.95) rectangle (3.76,2.25);
+    \node[font=\scriptsize\bfseries] at (2.99,2.12) {\dots\dots};
+    \node[font=\scriptsize\bfseries] at (2.99,1.72) {\dots\dots};
+    \foreach \x in {3.76, 3.9133, 5.14, 5.2933} {
+      \draw[fill=dirc] (\x,1.45) rectangle (\x+0.1533,1.95); \draw[fill=jobB] (\x,1.95) rectangle (\x+0.1533,2.25);
+    }
+    \draw[arr] (0.95,1.6) .. controls (1.75,1.6) and (1.0,2.1) .. (2.0,2.1);
+    \draw[arr] (2.15,2.12) .. controls (2.2,2.4) and (2.35,2.5) .. (2.5,2.42);
+    \draw[arr] (3.8367,2.12) .. controls (3.78,2.8) and (3.99,2.75) .. (3.99,2.28);
+    \draw[arr] (4.0,2.12) .. controls (4.4,2.85) and (4.85,2.75) .. (5.2,2.28);
+    \draw[arr] (5.37,2.1) -- (5.62,2.1); \node[font=\scriptsize, anchor=west] at (5.62,2.1) {NULL};
+    \foreach \x in {2.0733, 4.0667, 5.14, 5.4467} \draw[arr] (\x,1.42) -- (\x,1.03);
+  \end{scope}
+  % (b) the free space
+  \begin{scope}[yshift=-4.3cm]
+    \node[font=\small, anchor=east] at (-0.25,0.5) {(b)};
+    \pic {lldisk};
+    \draw[fill=jobB] (5.4467,0.71) rectangle (5.6,1.0);
+    \pic {fst};
+    \draw[fill=bootc] (1.15,2.6) rectangle (2.15,3.4); \node[text=white, font=\scriptsize\bfseries, align=center] at (1.65,3.0) {Free\\space};
+    \draw[fill=jobB] (1.15,1.4) rectangle (2.15,2.6); \node[font=\scriptsize, align=center] at (1.65,2.0) {Start from\\block\#\\199.};
+    \draw[very thick] (-0.75,1.4) rectangle (2.15,3.4);
+    \draw[fill=freec] (5.4467,1.45) rectangle (5.6,1.95); \draw[fill=jobB] (5.4467,1.95) rectangle (5.6,2.25);
+    \draw[arr] (1.95,1.6) .. controls (3.4,1.6) and (4.1,1.62) .. (3.85,1.85)
+               .. controls (3.6,2.05) and (3.5,2.1) .. (4.2,2.1) -- (5.42,2.1);
+    \draw[arr] (5.523,2.1) -- (5.78,2.1); \node[font=\scriptsize, anchor=west] at (5.78,2.1) {NULL};
+  \end{scope}
+\end{tikzpicture}
+\caption{Attempt 3.1: (a) each file is a linked list of blocks, starting from the block recorded in the file system table; (b) the free space is a linked list too (after slides 69--70).}
+\label{fig:linked}
+\end{figure}
 
-\emph{Cons.} The first is the \emph{random access problem}: accessing a specific block is expensive. In the worst case, reading the last block of a file means traversing from its first block, on the disk, all the way to the last, a large number of disk accesses. The second is new.
+\emph{Pros.} This is easy to implement, since a pointer is just the number of the next block, and the file system table is small: one number per file. It also fixes what went wrong in Attempt 2: there is no external fragmentation, files can grow and shrink freely, and free space is easy to keep track of.
+
+\emph{Cons.} There are two. The first is the \emph{random access problem}: reaching a particular block is expensive. The FS must follow the chain from the first block, and every step is a disk access, so reading the last block of a large file means reading every block before it (\Cref{fig:randaccess}). The second is a new kind of waste that blocks bring with them.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1.5cm, y=1cm]
+  \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+  \foreach \c [count=\i from 0] in {usedc,usedc,usedc,usedc,usedc,usedc,usedc,
+      dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,
+      usedc,usedc,usedc,usedc,usedc,usedc,usedc,dirc,dirc} {
+    \draw[fill=\c] ({1+\i*4.6/30},0) rectangle ({1+(\i+1)*4.6/30},0.71);
+    \draw[fill=jobB] ({1+\i*4.6/30},0.71) rectangle ({1+(\i+1)*4.6/30},1.0);
+  }
+  \draw[fill=freec] (5.4467,0) rectangle (5.6,1.0);
+  \node[font=\scriptsize, anchor=north] at (0,0) {0};
+  \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+  \draw[decorate, decoration={brace, amplitude=4pt}, sigc, thick] (2.0733,1.1) -- (4.0667,1.1);
+  \node[font=\scriptsize] at (3.69,1.6) {Traversed blocks};
+  \draw[arr, sigc] (4.45,1.45) -- (5.2167,1.03);
+  \node[font=\scriptsize] at (6.2,1.6) {Target block};
+  \draw[arr, sigc] (5.65,1.45) -- (5.37,1.03);
+\end{tikzpicture}
+\caption{The random access problem: to reach the target block, every block before it in the list is read (after slide 72).}
+\label{fig:randaccess}
+\end{figure}
 
 \begin{definition}[Internal Fragmentation]
-  A file is not always a multiple of the block size, so the last block of a file may not be completely filled. The remaining space is wasted, because no other file is allowed to use it. This is \emph{internal fragmentation}.
+  A file is not always a multiple of the block size, so the last block of a file may not be completely filled. The remaining space is wasted, because no other file is allowed to use it. This is \emph{internal fragmentation} (\Cref{fig:intfrag}).
 \end{definition}
 
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \draw[fill=usedc] (0,0) rectangle (1.33,1.07);
+  \draw[fill=freec] (1.33,0) rectangle (2,1.07);
+  \draw[fill=jobB] (0,1.07) rectangle (2,1.47);
+  \node[font=\scriptsize, anchor=south] at (1,1.55) {The last block};
+  \node[font=\scriptsize, anchor=east] at (-0.75,0.24) {Allocated space};
+  \draw[arr] (-0.7,0.3) -- (0.45,0.42);
+  \node[font=\scriptsize, anchor=west] at (3.0,0.0) {Unused space};
+  \draw[arr] (2.95,0.05) -- (1.72,0.42);
+  \draw[decorate, decoration={brace, amplitude=5pt}, thick] (2,-0.5) -- (0,-0.5);
+  \draw[arr] (0,-0.48) -- (0,-0.03); \draw[arr] (2,-0.48) -- (2,-0.03);
+  \node[font=\scriptsize, anchor=north] at (1,-0.75) {Block boundaries};
+\end{tikzpicture}
+\caption{Internal fragmentation: the last block of a file is only partly allocated (after slide 73).}
+\label{fig:intfrag}
+\end{figure}
+
 \begin{remark}[Choosing the Block Size]
-  If the block size is small, the total number of blocks is large: each file contains more blocks, so the number of disk accesses increases, and the list representation itself takes more space, leaving less for real content. In return, internal fragmentation is alleviated (less space is wasted per file). A large block size reverses each of these.
+  Small blocks waste less space at the end of each file, so internal fragmentation is alleviated. But each file then consists of more blocks, which means more disk accesses to traverse it, and more space spent on the pointers themselves, leaving less for real content. A large block size reverses each of these.
 \end{remark}
 
-To solve the random access problem, the information about the next block should be \emph{centralized} instead of being spread over the data blocks.
+The random access problem comes from keeping the ``next block'' pointers inside the data blocks, scattered over the disk. The fix is to \emph{centralize} them.
 
 \subsubsection{Attempt 3.2: the file allocation table}
-Store the linked lists as one table (\Cref{fig:fat}).
+Keep the linked lists, but move all the pointers into one table (\Cref{fig:fat}).
 
 \begin{definition}[File Allocation Table]
   A \emph{file allocation table} (FAT) is an array with one entry per block of the device, stored contiguously. The entry of block $b$ holds the number of the block that follows $b$ in its file, or a special value marking the end of the file ($-1$ in \Cref{fig:fat}) or a free block ($0$). The file system table maps each filename to the file's starting block.
 \end{definition}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}
-  \node[hcell, minimum width=17mm] (fh) at (0,0) {Filename};
-  \node[hcell, minimum width=17mm, below=0pt of fh] (sh) {Start block};
-  \foreach \f/\s [count=\i] in {rock.mp3/0, sweet.jpg/123, new.exe/80, Empty/199} {
-    \node[cell, minimum width=15mm, font=\scriptsize\ttfamily] at ($(fh.east)+(0.75+1.5*\i-1.5,0)$) {\f};
-    \node[cell, minimum width=15mm] at ($(sh.east)+(0.75+1.5*\i-1.5,0)$) {\s};
+\begin{tikzpicture}[x=1.5cm, y=1cm]
+  % file system table
+  \draw[fill=bootc] (-1.63,3.55) rectangle (-0.35,3.95); \node[text=white, font=\scriptsize\bfseries] at (-0.99,3.75) {Filename};
+  \draw[fill=bootc] (-1.63,3.15) rectangle (-0.35,3.55); \node[text=white, font=\scriptsize\bfseries] at (-0.99,3.35) {Start block \#};
+  \foreach \f/\s [count=\i from 0] in {rock.mp3/0, sweet.jpg/123, new.exe/80, Empty/199} {
+    \draw[fill=jobB] (-0.35+0.95*\i,3.55) rectangle (0.6+0.95*\i,3.95); \node[font=\scriptsize] at (0.125+0.95*\i,3.75) {\f};
+    \draw[fill=jobB] (-0.35+0.95*\i,3.15) rectangle (0.6+0.95*\i,3.55); \node[font=\scriptsize] at (0.125+0.95*\i,3.35) {\s};
   }
-  \begin{scope}[yshift=-1.9cm, xshift=-1.2cm]
-    \node[hcell, minimum width=17mm] (bh) at (0,0) {Block \#};
-    \node[hcell, minimum width=17mm, below=0pt of bh] (nh) {Next block};
-    \foreach \b/\n/\c [count=\i] in {0/1/usedc, \dots/\dots/usedc, 79/$-1$/usedc, 80/81/dirc, \dots/\dots/dirc, 122/197/dirc,
-                                     123/124/jobB, \dots/\dots/jobB, 197/198/dirc, 198/$-1$/dirc, 199/0/freec} {
-      \node[cell, minimum width=9mm, fill=\c!70] at ($(bh.east)+(0.45+0.9*\i-0.9,0)$) {\b};
-      \node[cell, minimum width=9mm, fill=\c!35] at ($(nh.east)+(0.45+0.9*\i-0.9,0)$) {\n};
-    }
-  \end{scope}
-  \node[font=\scriptsize, color=sigc, align=center, anchor=north] at (3.6,-2.9) {\code{new.exe}: 80 $\to$ 81 $\to\cdots\to$ 122\\ $\to$ 197 $\to$ 198 $\to$ end};
+  \draw[very thick] (-1.63,3.15) rectangle (3.45,3.95); \draw[very thick] (-0.35,3.15) -- (-0.35,3.95);
+  % the FAT, zoomed in
+  \fill[metac] (-3.31,1.35) rectangle (5.46,2.98);
+  \draw[fill=bootc] (-3.15,2.05) rectangle (-2.02,2.45); \node[text=white, font=\scriptsize\bfseries] at (-2.585,2.25) {Block \#};
+  \draw[fill=bootc] (-3.15,1.65) rectangle (-2.02,2.05); \node[text=white, font=\scriptsize\bfseries] at (-2.585,1.85) {Next block};
+  \foreach \xa/\xb/\b/\n/\ct/\cb in {
+      -2.02/-1.08/0/1/usedc!55!bootc/usedc!45!jobB,
+      -1.08/-0.77/\dots/\dots/usedc!55!bootc/usedc!45!jobB,
+      -0.77/-0.23/79/$-1$/usedc!55!bootc/usedc!45!jobB,
+      -0.23/0.77/80/81/dirc!50!bootc/dirc!60!jobB,
+      0.77/1.23/\dots/\dots/dirc!50!bootc/dirc!60!jobB,
+      1.23/1.77/122/197/dirc!50!bootc/dirc!60!jobB,
+      1.77/2.75/123/124/blue!60!magenta!60!bootc/blue!60!magenta!35!jobB,
+      2.75/3.08/\dots/\dots/blue!60!magenta!60!bootc/blue!60!magenta!35!jobB,
+      3.08/3.83/197/198/dirc!50!bootc/dirc!60!jobB,
+      3.83/4.38/198/$-1$/dirc!50!bootc/dirc!60!jobB,
+      4.38/5.22/199/0/freec!40!bootc/freec!50!jobB} {
+    \draw[fill=\ct] (\xa,2.05) rectangle (\xb,2.45); \node[text=white, font=\scriptsize\bfseries] at ({(\xa+\xb)/2},2.25) {\b};
+    \draw[fill=\cb] (\xa,1.65) rectangle (\xb,2.05); \node[font=\scriptsize] at ({(\xa+\xb)/2},1.85) {\n};
+  }
+  \draw[very thick] (-3.15,1.65) rectangle (5.22,2.45); \draw[very thick] (-2.02,1.65) -- (-2.02,2.45);
+  \foreach \xa/\xb/\c in {-2.02/-0.23/usedc, -0.23/1.77/dirc, 1.77/3.08/blue!60!magenta!60, 3.08/4.38/dirc, 4.38/5.22/freec}
+    \draw[\c, very thick] (\xa,1.6) rectangle (\xb,2.5);
+  \node[font=\scriptsize] at (-1.48,2.74) {File starts};
+  \node[font=\scriptsize] at (-0.44,2.74) {File ends};
+  \node[font=\scriptsize] at (1.5,2.74) {Next block is far away};
+  \node[font=\scriptsize] at (4.79,2.74) {An empty block};
+  \draw[dashed] (-3.31,1.35) -- (-1.46,1.0) (5.46,1.35) -- (0,1.0);
+  % the disk
+  \draw[fill=metac] (-1.46,0) rectangle (0,1.0); \node[font=\tiny, align=center] at (-0.73,0.5) {File allocation\\table};
+  \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+  \foreach \c [count=\i from 0] in {usedc,usedc,usedc,usedc,usedc,usedc,usedc,
+      dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,
+      blue!60!magenta!60,blue!60!magenta!60,blue!60!magenta!60,blue!60!magenta!60,
+      blue!60!magenta!60,blue!60!magenta!60,blue!60!magenta!60,dirc,dirc,freec}
+    \draw[fill=\c] ({1+\i*4.6/30},0) rectangle ({1+(\i+1)*4.6/30},1.0);
+  \node[font=\scriptsize, anchor=north] at (-1.46,0) {0};
+  \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+  % each FAT entry belongs to one block
+  \foreach \xc/\k in {-1.55/0, -0.5/6, 0.27/7, 1.5/19, 2.26/20, 3.455/27, 4.105/28, 4.8/29}
+    \draw[-{Stealth[length=1.4mm]}] (\xc,1.65) -- ({1+(\k+0.5)*4.6/30},1.02);
+  % the file system table lives on the disk
+  \draw[arr] plot[smooth, tension=0.7] coordinates {(0.46,-0.08) (-1.6,-0.75) (-3.4,-0.2) (-4.0,1.45) (-3.3,3.1) (-1.68,3.55)};
 \end{tikzpicture}
-\caption{The file allocation table: one ``next block'' entry per block, $-1$ marking the end of a file and $0$ a free block. The chain of \code{new.exe} jumps from 122 to the faraway block 197 (after slide 76).}
+\caption{The file allocation table: one ``next block'' entry per block, $-1$ marking the end of a file and $0$ a free block. The chain of \code{new.exe} jumps from 122 to the faraway block 197 (after slides 76 and 82).}
 \label{fig:fat}
 \end{figure}
 
 The size of the FAT depends on the size of the device and the block size. A 100\,GB disk with 1\,KB blocks has about 100 million blocks, hence 100 million FAT entries; at 4 bytes per entry, the FAT needs 400\,MB.
 
-\emph{Pros.} The file system table and the FAT can be cached in kernel memory for fast lookup. Following a chain then happens in memory, so the random access problem is gone. \emph{Cons.} The FAT takes a lot of space.
+\emph{Pros.} Because the FAT is a single table, it can be cached in kernel memory together with the file system table. Following a chain then happens in memory instead of on the disk, which solves the random access problem. \emph{Cons.} The FAT takes a lot of space.
 
 This is the design of FAT12, FAT16, and FAT32; NTFS does something similar but more complex. In FAT, a block is called a \emph{cluster}, and the versions differ in the length of a cluster number:
 \begin{center}
@@ -176,40 +562,92 @@ Divide the FAT by file: give each file its own small table of block addresses (\
   An \emph{index node} (\emph{inode}) stores the addresses of all the data blocks of one file. All inodes are kept in the \emph{inode table}, and the file system table maps each filename to an inode number. The size of the inode table determines the number of files the FS can store.
 \end{definition}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}
-  \node[hcell, minimum width=14mm] (fh) at (0,0) {Filename};
-  \node[hcell, minimum width=14mm, below=0pt of fh] (ih) {Inode \#};
-  \foreach \f/\s [count=\i] in {rock.mp3/0, sweet.jpg/1, new.exe/2, Empty/199} {
-    \node[cell, minimum width=15mm, font=\scriptsize\ttfamily] (f\i) at ($(fh.east)+(0.75+1.5*\i-1.5,0)$) {\f};
-    \node[cell, minimum width=15mm] (i\i) at ($(ih.east)+(0.75+1.5*\i-1.5,0)$) {\s};
+\begin{tikzpicture}[x=1.5cm, y=1cm,
+  inodetable/.pic={
+    \fill[metac] (-2.69,1.45) rectangle (5.08,3.55);
+    \foreach \xa/\n/\hc/\a/\b/\yt in {-2.46/0/usedc/0/79/3.35, 0.23/1/dirc/80/197/3.45, 2.77/2/blue!60!magenta!60/123/196/3.45} {
+      \draw[fill=\hc] (\xa,\yt-0.4) rectangle (\xa+2.08,\yt); \node[font=\scriptsize\bfseries] at (\xa+1.04,\yt-0.2) {Index node \#\n};
+      \foreach \lab/\v [count=\r] in {Block \#1/\a, \dots/\dots, Block \#n/\b} {
+        \draw[fill=bootc] (\xa,\yt-0.4-0.4*\r) rectangle (\xa+1.13,\yt-0.4*\r);
+        \node[text=white, font=\scriptsize\bfseries] at (\xa+0.565,\yt-0.2-0.4*\r) {\lab};
+        \draw[fill=jobB] (\xa+1.13,\yt-0.4-0.4*\r) rectangle (\xa+2.08,\yt-0.4*\r);
+        \node[font=\scriptsize] at (\xa+1.605,\yt-0.2-0.4*\r) {\v};
+      }
+      \draw[very thick] (\xa,\yt-1.6) rectangle (\xa+2.08,\yt); \draw[very thick] (\xa+1.13,\yt-1.6) -- (\xa+1.13,\yt-0.4);
+    }
+    \draw[dashed, thick] (-2.69,1.45) -- (-1.46,1.0) (5.08,1.45) -- (0,1.0);
+    \draw[fill=metac] (-1.46,0) rectangle (0,1.0); \node[font=\tiny, align=center] at (-0.73,0.5) {Index-node\\table};
+    \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+    \foreach \c [count=\i from 0] in {usedc,usedc,usedc,usedc,usedc,usedc,usedc,
+        dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,
+        blue!60!magenta!60,blue!60!magenta!60,blue!60!magenta!60,blue!60!magenta!60,
+        blue!60!magenta!60,blue!60!magenta!60,blue!60!magenta!60,dirc,dirc,freec}
+      \draw[fill=\c] ({1+\i*4.6/30},0) rectangle ({1+(\i+1)*4.6/30},1.0);
+    \node[font=\scriptsize, anchor=north] at (-1.46,0) {0};
+    \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+  }]
+  \pic {inodetable};
+  \draw[fill=bootc] (-2.08,4.2) rectangle (-0.65,4.6); \node[text=white, font=\scriptsize\bfseries] at (-1.365,4.4) {Filename};
+  \draw[fill=bootc] (-2.08,3.8) rectangle (-0.65,4.2); \node[text=white, font=\scriptsize\bfseries] at (-1.365,4.0) {Inode \#};
+  \foreach \f/\s [count=\i from 0] in {rock.mp3/0, sweet.jpg/1, new.exe/2, Empty/199} {
+    \draw[fill=jobB] (-0.65+1.04*\i,4.2) rectangle (0.39+1.04*\i,4.6); \node[font=\scriptsize] at (-0.13+1.04*\i,4.4) {\f};
+    \draw[fill=jobB] (-0.65+1.04*\i,3.8) rectangle (0.39+1.04*\i,4.2); \node[font=\scriptsize] at (-0.13+1.04*\i,4.0) {\s};
   }
-  \foreach \n/\a/\b/\c/\x in {0/0/79/usedc/-0.6, 1/80/197/dirc!70/3.0, 2/123/196/jobB/6.6} {
-    \begin{scope}[xshift=\x cm, yshift=-1.6cm]
-      \node[cell, fill=\c, minimum width=30mm, font=\scriptsize\bfseries] (n\n) at (0,0) {Index node \#\n};
-      \node[cell, fill=bootc!40, minimum width=15mm] (l\n1) at (-0.75,-0.5) {Block 1};
-      \node[cell, minimum width=15mm] at (0.75,-0.5) {\a};
-      \node[cell, fill=bootc!40, minimum width=15mm] at (-0.75,-1.0) {\dots};
-      \node[cell, minimum width=15mm] at (0.75,-1.0) {\dots};
-      \node[cell, fill=bootc!40, minimum width=15mm] at (-0.75,-1.5) {Block $n$};
-      \node[cell, minimum width=15mm] at (0.75,-1.5) {\b};
-    \end{scope}
-  }
-  \draw[arr] (i1.south) -- (n0.north);
-  \draw[arr] (i2.south) -- (n1.north);
-  \draw[arr] (i3.south) -- (n2.north);
-  \node[font=\scriptsize, color=sigc] at (-0.6,-3.6) {80 addresses};
-  \node[font=\scriptsize, color=sigc] at (3.0,-3.6) {45 addresses};
-  \node[font=\scriptsize, color=sigc] at (6.6,-3.6) {74 addresses};
+  \draw[very thick] (-2.08,3.8) rectangle (3.51,4.6); \draw[very thick] (-0.65,3.8) -- (-0.65,4.6);
+  \draw[arr] (-0.31,3.78) -- (-1.12,3.37);
+  \draw[arr] (0.92,3.78) -- (1.08,3.47);
+  \draw[arr] (2.31,3.78) -- (3.12,3.47);
+  \draw[arr] plot[smooth, tension=0.7] coordinates {(0.46,-0.08) (-1.85,-0.7) (-3.6,-0.1) (-4.08,1.8) (-3.5,3.8) (-2.12,4.2)};
 \end{tikzpicture}
-\caption{Index nodes: the file system table maps names to inode numbers, and each inode lists the blocks of one file. Different files need different numbers of addresses (after slides 83 and 86).}
+\caption{Index nodes: the file system table maps each filename to an inode number, and each inode in the inode table lists the blocks of one file (after slide 83).}
 \label{fig:inodes}
 \end{figure}
 
 \emph{Pros.} One read of the file system table and one read of the inode table together locate all the data blocks of a file, and only the inodes of open files need to be in memory, which consumes far less memory than a FAT.
 
-\emph{Cons.} The length of the list of block addresses varies from file to file, so the size of an inode would have to be variable too, which makes it hard to read the inode table efficiently (one cannot compute where inode $i$ starts). Can inodes be made fixed-size?
+\emph{Cons.} The length of the list of block addresses varies from file to file (\Cref{fig:inodevar}), so the size of an inode would have to be variable too, which makes it hard to read the inode table efficiently (one cannot compute where inode $i$ starts). Can inodes be made fixed-size?
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1.5cm, y=1cm,
+  inodetable/.pic={
+    \fill[metac] (-2.69,1.45) rectangle (5.08,3.55);
+    \foreach \xa/\n/\hc/\a/\b/\yt in {-2.46/0/usedc/0/79/3.35, 0.23/1/dirc/80/197/3.45, 2.77/2/blue!60!magenta!60/123/196/3.45} {
+      \draw[fill=\hc] (\xa,\yt-0.4) rectangle (\xa+2.08,\yt); \node[font=\scriptsize\bfseries] at (\xa+1.04,\yt-0.2) {Index node \#\n};
+      \foreach \lab/\v [count=\r] in {Block \#1/\a, \dots/\dots, Block \#n/\b} {
+        \draw[fill=bootc] (\xa,\yt-0.4-0.4*\r) rectangle (\xa+1.13,\yt-0.4*\r);
+        \node[text=white, font=\scriptsize\bfseries] at (\xa+0.565,\yt-0.2-0.4*\r) {\lab};
+        \draw[fill=jobB] (\xa+1.13,\yt-0.4-0.4*\r) rectangle (\xa+2.08,\yt-0.4*\r);
+        \node[font=\scriptsize] at (\xa+1.605,\yt-0.2-0.4*\r) {\v};
+      }
+      \draw[very thick] (\xa,\yt-1.6) rectangle (\xa+2.08,\yt); \draw[very thick] (\xa+1.13,\yt-1.6) -- (\xa+1.13,\yt-0.4);
+    }
+    \draw[dashed, thick] (-2.69,1.45) -- (-1.46,1.0) (5.08,1.45) -- (0,1.0);
+    \draw[fill=metac] (-1.46,0) rectangle (0,1.0); \node[font=\tiny, align=center] at (-0.73,0.5) {Index-node\\table};
+    \draw[fill=jobB] (0,0) rectangle (1,1.0); \node[font=\tiny, align=center] at (0.5,0.5) {File\\system\\table};
+    \foreach \c [count=\i from 0] in {usedc,usedc,usedc,usedc,usedc,usedc,usedc,
+        dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,dirc,
+        blue!60!magenta!60,blue!60!magenta!60,blue!60!magenta!60,blue!60!magenta!60,
+        blue!60!magenta!60,blue!60!magenta!60,blue!60!magenta!60,dirc,dirc,freec}
+      \draw[fill=\c] ({1+\i*4.6/30},0) rectangle ({1+(\i+1)*4.6/30},1.0);
+    \node[font=\scriptsize, anchor=north] at (-1.46,0) {0};
+    \node[font=\scriptsize, anchor=north] at (5.6,0) {100\,GB};
+  }]
+  \pic {inodetable};
+  \node[font=\scriptsize, align=left] at (-0.86,4.05) {80 block\\addresses};
+  \node[font=\scriptsize, align=left] at (0.92,4.05) {45 block\\addresses};
+  \node[font=\scriptsize, align=left] at (3.54,4.05) {74 block\\addresses};
+  \draw[arr] (-1.0,3.72) -- (-1.12,3.38);
+  \draw[arr] (1.15,3.72) -- (1.3,3.48);
+  \draw[arr] (3.62,3.72) -- (3.75,3.48);
+  \draw[sigc, thick, fill=white] (5.1,4.05) -- (4.71,3.71) -- (5.35,3.93);
+  \node[ellipse, draw=sigc, thick, fill=white, font=\scriptsize, align=center, inner sep=1pt] at (5.65,4.36) {Can we make\\them fixed-size?};
+\end{tikzpicture}
+\caption{Each inode holds a different number of block addresses (after slide 86).}
+\label{fig:inodevar}
+\end{figure}
 
 \subsubsection{Attempt 4.1: indirect blocks}
 Give each inode a fixed number of address slots, and let some of them point to blocks that hold further addresses (\Cref{fig:indirect}).
@@ -218,47 +656,92 @@ Give each inode a fixed number of address slots, and let some of them point to b
   An inode has a fixed size. Its first slots (12 of them in ext2/3/4) are \emph{direct} block addresses, pointing to data blocks. Once those are used up, the \emph{indirect} block address is used: it points to a data block that contains a series of data block addresses. The \emph{double indirect} address points to a block of indirect-block addresses, and the \emph{triple indirect} address adds a third layer.
 \end{definition}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}[db/.style={draw, fill=datac, minimum size=4.5mm},
-                    ib/.style={draw, fill=freec, minimum width=5mm, minimum height=6mm,
-                               path picture={\foreach \k in {1,...,4} \draw[thin] ($(path picture bounding box.south west)+(0,0.12*\k)$) -- ++(5mm,0);}}]
-  \node[cell, fill=greybg, minimum width=34mm, font=\scriptsize\bfseries] (h) at (0,0) {Index node};
-  \foreach \t/\c [count=\i] in {Direct block \#0/bootc, Direct block \#1/bootc, \dots/bootc, Direct block \#11/bootc,
-                                Indirect block/blue!60!black, Double indirect block/blue!60!black, Triple indirect block/blue!60!black} {
-    \node[cell, fill=\c, text=white, minimum width=26mm, font=\tiny\bfseries] (s\i) at (-0.4,-0.5*\i) {\t};
-    \node[cell, minimum width=8mm, right=0pt of s\i] (p\i) {$\bullet$};
+\begin{tikzpicture}[x=1.05cm, y=-1.05cm,
+  ab/.pic={\draw[fill=freec] (0,0) rectangle (0.7,0.6); \foreach \k in {1,...,5} \draw[thin] (0,0.1*\k) -- (0.7,0.1*\k);},
+  db/.pic={\draw[fill=datac] (0,0) rectangle (0.7,0.6);},
+  dot/.style={circle, fill, inner sep=0pt, minimum size=4.5pt}]
+  % regions of the three layers
+  \fill[metac] plot[smooth cycle, tension=0.6] coordinates {(7.2,5.35) (7.45,5.9) (8.3,5.95) (9.8,5.75) (10.08,5.0) (10.08,3.1) (9.75,2.68) (9.0,2.65) (8.6,3.2) (8.2,4.55) (7.6,5.15)};
+  \fill[dirc] plot[smooth cycle, tension=0.6] coordinates {(10.7,6.3) (11.2,6.85) (12.1,7.1) (12.8,8.4) (13.7,8.9) (14.4,8.6) (14.9,7.6) (15.2,6.3) (15.2,4.7) (14.75,3.4) (14.4,2.25) (13.6,2.1) (13.0,2.6) (12.3,4.4) (11.6,5.5) (10.9,5.85)};
+  \fill[usedc] plot[smooth cycle, tension=0.7] coordinates {(9.08,6.65) (9.6,6.52) (10.05,6.55) (10.0,6.9) (9.6,7.05) (9.25,6.95)};
+  \node[font=\scriptsize] at (9.55,6.78) {\dots};
+  \node[font=\scriptsize, align=left, anchor=west] at (6.9,2.75) {1\textsuperscript{st} layer of\\indirect blocks};
+  \node[font=\scriptsize, align=left, anchor=west] at (10.7,2.75) {2\textsuperscript{nd} layer of\\indirect blocks};
+  \node[font=\scriptsize, align=left, anchor=west] at (8.95,7.45) {3\textsuperscript{rd} layer of\\indirect blocks};
+  % the index node
+  \draw[fill=black!13] (1.2,3.33) rectangle (4.8,3.73); \node[font=\scriptsize\bfseries] at (3.0,3.53) {Index node};
+  \foreach \t/\lc/\pc [count=\i from 0] in {Direct block \#0/bootc/jobB, Direct block \#1/bootc/jobB, \dots/bootc/jobB,
+      Direct block \#11/bootc/jobB, Indirect block/blue!50!black!80/metac, Double indirect block/blue!50!black!80/dirc,
+      Triple indirect block/blue!50!black!80/usedc} {
+    \draw[fill=\lc] (1.2,3.73+0.4*\i) rectangle (3.88,4.13+0.4*\i);
+    \node[text=white, font=\tiny\bfseries] at (2.54,3.93+0.4*\i) {\t};
+    \draw[fill=\pc] (3.88,3.73+0.4*\i) rectangle (4.8,4.13+0.4*\i);
   }
-  \node[db] (d1) at (2.6,0.0) {}; \node[db] (d2) at (2.6,-0.7) {}; \node at (2.6,-1.25) {\dots}; \node[db] (d4) at (2.6,-1.8) {};
-  \draw[arr] (p1.east) -- (d1); \draw[arr] (p2.east) -- (d2); \draw[arr] (p4.east) -- (d4);
+  \draw[very thick] (1.2,3.33) rectangle (4.8,6.53); \draw[very thick] (3.88,3.73) -- (3.88,6.53);
+  \node[font=\scriptsize] at (4.34,4.7) {\dots};
+  \foreach \y in {3.93,4.33,5.13,5.53,5.93,6.33} \node[dot] at (4.34,\y) {};
+  % direct blocks
+  \pic at (5.56,2.63) {db}; \pic at (5.56,3.43) {db}; \pic at (5.56,4.43) {db};
+  \node[font=\scriptsize] at (5.91,4.2) {\dots};
+  \draw[arr] (4.34,3.93) -- (5.54,3.15);
+  \draw[arr] (4.34,4.33) -- (5.54,3.85);
+  \draw[arr] (4.34,5.13) -- (5.54,4.85);
   % single indirect
-  \node[ib] (i1) at (4.2,-2.5) {};
-  \foreach \k/\y in {1/-1.3,2/-1.9,3/-2.5} { \node[db] (e\k) at (5.4,\y) {}; \draw[arr] (i1.east) -- (e\k); }
-  \node at (5.4,-3.0) {\dots};
-  \draw[arr] (p5.east) -- (i1.west);
+  \pic at (7.58,5.23) {ab};
+  \pic at (9.07,3.03) {db}; \pic at (9.07,3.83) {db}; \pic at (9.07,4.83) {db};
+  \node[font=\scriptsize] at (9.42,4.6) {\dots};
+  \foreach \y/\ty in {5.28/3.6, 5.5/4.4, 5.71/5.3} { \node[dot] at (8.0,\y) {}; \draw[arr] (8.0,\y) -- (9.05,\ty); }
+  \draw[arr] (4.34,5.53) -- (7.56,5.53);
   % double indirect
-  \node[ib] (j0) at (6.6,-3.0) {};
-  \foreach \k/\y in {1/-2.1,2/-3.9} {
-    \node[ib] (j\k) at (7.8,\y) {};
-    \draw[arr] (j0.east) -- (j\k.west);
-    \foreach \m/\dy in {1/0.45,2/0,3/-0.45} { \node[db] (f\k\m) at (9.0,\y+\dy) {}; \draw[arr] (j\k.east) -- (f\k\m); }
-  }
-  \node at (7.8,-3.0) {\vdots};
-  \draw[arr] (p6.east) -- (j0.west);
+  \pic at (11.0,5.83) {ab};
+  \foreach \y in {4.73,5.63,6.63} \pic at (12.2,\y) {ab};
+  \foreach \y/\ty in {5.9/5.3, 6.12/5.95, 6.34/6.65} { \node[dot] at (11.43,\y) {}; \draw[arr] (11.43,\y) -- (12.18,\ty); }
+  \foreach \y in {2.33,3.03,3.73,6.53,7.23,7.93} \pic at (13.4,\y) {db};
+  \foreach \y in {4.43,5.13,5.83} \pic at (14.2,\y) {db};
+  \foreach \y/\ty in {4.8/2.9, 5.0/3.65, 5.2/4.35} { \node[dot] at (12.62,\y) {}; \draw[arr] (12.62,\y) -- (13.38,\ty); }
+  \foreach \y/\ty in {5.7/4.85, 5.9/5.45, 6.1/6.05} { \node[dot] at (12.62,\y) {}; \draw[arr] (12.62,\y) -- (14.18,\ty); }
+  \foreach \y/\ty in {6.7/6.82, 6.92/7.4, 7.14/8.1} { \node[dot] at (12.62,\y) {}; \draw[arr] (12.62,\y) -- (13.38,\ty); }
+  \draw[arr] (4.34,5.93) -- (10.98,6.12);
   % triple indirect
-  \node[ib] (k0) at (4.2,-4.2) {};
-  \node[right=2pt of k0, font=\scriptsize] {\dots\ (three layers)};
-  \draw[arr] (p7.east) -- (k0.west);
-  \node[font=\tiny, align=center] at (5.0,-0.6) {1st layer of\\ indirect blocks};
-  \node[font=\tiny, align=center] at (8.3,-1.25) {2nd layer of\\ indirect blocks};
-  \node[ib] at (0.0,-4.6) {}; \node[font=\scriptsize, anchor=west] at (0.4,-4.6) {block of addresses};
-  \node[db] at (0.0,-5.2) {}; \node[font=\scriptsize, anchor=west] at (0.4,-5.2) {block of data};
+  \draw[arr] (4.34,6.33) -- (9.05,6.65);
+  % legend
+  \fill[black!13] (0.8,7.2) rectangle (8.3,8.2);
+  \pic at (1.2,7.4) {ab}; \node[font=\scriptsize, align=left, anchor=west] at (2.1,7.7) {Data block\\storing block addresses.};
+  \pic at (5.4,7.4) {db}; \node[font=\scriptsize, align=left, anchor=west] at (6.3,7.7) {Data block\\storing data.};
 \end{tikzpicture}
 \caption{A fixed-size inode with 12 direct addresses and single, double, and triple indirect addresses (after slide 87).}
 \label{fig:indirect}
 \end{figure}
 
-How many addresses fit in one block? With 32-bit (4-byte) block addresses and 1\,KB blocks, an indirect block holds $1024 / 4 = 256$ addresses. Indirect blocks make the inode a fixed-length structure, and they increase the supported file size enormously.
+How many addresses fit in one block? With 32-bit (4-byte) block addresses and 1\,KB blocks, an indirect block holds $1024 / 4 = 256$ addresses (\Cref{fig:addrblock}). Indirect blocks make the inode a fixed-length structure, and they increase the supported file size enormously.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm,
+  ab/.pic={\draw[fill=freec] (0,0) rectangle (0.7,0.6); \foreach \k in {1,...,5} \draw[thin] (0,0.1*\k) -- (0.7,0.1*\k);},
+  dot/.style={circle, fill, inner sep=0pt, minimum size=4.5pt}]
+  % (a)
+  \begin{scope}
+    \pic at (0,0) {ab};
+    \draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}, thick] (-0.3,0) -- (-0.3,0.6);
+    \draw[thick] (-0.42,0) -- (-0.18,0) (-0.42,0.6) -- (-0.18,0.6);
+    \node[font=\scriptsize, anchor=east] at (-0.45,0.3) {There are 256 addresses.};
+    \node[font=\scriptsize, anchor=north] at (0.45,-0.05) {1KB block};
+    \node[font=\small, anchor=east] at (-3.9,0.3) {(a)};
+  \end{scope}
+  % (b)
+  \begin{scope}[xshift=2.6cm]
+    \node[font=\small, anchor=east] at (-0.25,0.3) {(b)};
+    \pic at (0,0) {ab}; \pic at (1.6,0) {ab}; \pic at (3.3,0) {ab};
+    \draw[fill=datac] (4.9,0) rectangle (5.6,0.6);
+    \foreach \x/\tx in {0.45/1.8, 2.15/3.5, 3.85/5.2} { \node[dot] at (\x,0.3) {}; \draw[arr] (\x,0.3) -- (\tx,0.3); }
+  \end{scope}
+\end{tikzpicture}
+\caption{(a) A 1\,KB block of 4-byte addresses holds 256 of them; (b) three layers of indirect blocks lead to a data block (after slides 89--90).}
+\label{fig:addrblock}
+\end{figure}
 
 \begin{example}[Maximum File Size with Indirect Blocks]
   \label{ex:maxfile}

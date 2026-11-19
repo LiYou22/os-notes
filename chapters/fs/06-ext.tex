@@ -1,3 +1,56 @@
+% Figure helpers for this section, after the slides' ext2 drawings
+\definecolor{extyel}{HTML}{FFFF66}
+\tikzset{
+  extc/.style={draw, inner sep=0pt, anchor=south west},
+  extdot/.style={densely dotted, semithick, -{Stealth[length=1.3mm]}},
+  extptr/.style={-{Stealth[length=1.4mm]}, thick},
+  extarr/.style={single arrow, draw, fill=freec, minimum height=0.5cm, minimum width=0.42cm,
+                 single arrow head extend=0.07cm, inner sep=0pt, anchor=west},
+}
+\newcommand{\extfont}{\tiny}
+\newcommand{\extrowh}{0.28}
+% \extstrip{p}: one block group; nodes p-sb, p-bb, p-ib, p-it, and data blocks p-d0..p-d18
+\newcommand{\extstrip}[1]{%
+  \node[extc, fill=bootc, minimum width=1.02cm, minimum height=0.58cm, text=white, font=\tiny\bfseries, align=center] (#1-sb) at (0,0) {Super-\\block};
+  \node[extc, fill=rowc, minimum width=0.94cm, minimum height=0.58cm, font=\tiny, align=center] (#1-bb) at (1.02,0) {Block\\bitmap};
+  \node[extc, fill=rowc, minimum width=0.95cm, minimum height=0.58cm, font=\tiny, align=center] (#1-ib) at (1.96,0) {Inode\\bitmap};
+  \node[extc, fill=metac, minimum width=1.52cm, minimum height=0.58cm, font=\tiny] (#1-it) at (2.91,0) {Inode table};
+  \foreach \c [count=\k from 0] in {dirc,freec,freec,usedc,usedc,usedc,freec,dirc,freec,freec,usedc,freec,freec,usedc,usedc,usedc,usedc,usedc,usedc}
+    \node[extc, fill=\c, minimum width=0.1455cm, minimum height=0.58cm] (#1-d\k) at (4.43+0.1455*\k,0) {};}
+% \extinode{name}{south-west corner}{label}: cells name-h, name-l1..3 (blue), name-r1..3 (yellow)
+\newcommand{\extinode}[3]{%
+  \begin{scope}[shift={#2}]
+    \foreach \i in {1,2,3} {
+      \node[extc, fill=bootc, minimum width=0.66cm, minimum height=0.26cm] (#1-l\i) at (0,0.78-0.26*\i) {};
+      \node[extc, fill=extyel, minimum width=0.54cm, minimum height=0.26cm] (#1-r\i) at (0.66,0.78-0.26*\i) {};
+    }
+    \node[extc, fill=usedc, minimum width=1.2cm, minimum height=0.28cm, font=\tiny\bfseries] (#1-h) at (0,0.78) {#3};
+    \draw[thick] (0,0) rectangle (1.2,1.06);
+  \end{scope}}
+% \extblocks{name}: the three data blocks pointed to by inode name; nodes name-b1..3
+\newcommand{\extblocks}[1]{%
+  \foreach \i/\dy in {1/0.04,2/0,3/-0.05} {
+    \node[draw, fill=datac, minimum size=0.2cm, inner sep=0pt] (#1-b\i) at ($(#1-r\i.east)+(0.3,\dy)$) {};
+    \draw[extptr] ($(#1-r\i.center)+(0.1,0)$) -- (#1-b\i.west);
+  }}
+% \extdir{p}{top-left}{title}{2nd header}{w1}{w2}{w3}{a/b/c,...}: a directory as a table;
+% cells p-n<i>, p-m<i>, p-f<i>
+\newcommand{\extdir}[8]{%
+  \begin{scope}[shift={#2}]
+    \pgfmathsetmacro{\extxb}{#5}\pgfmathsetmacro{\extxc}{#5+#6}\pgfmathsetmacro{\extxd}{#5+#6+#7}
+    \node[font=\extfont\bfseries, anchor=south] at (\extxd/2,0.02) {#3};
+    \node[extc, anchor=north west, fill=bootc, text=white, font=\extfont\bfseries, minimum width=#5cm, minimum height=\extrowh cm] at (0,0) {Inode \#};
+    \node[extc, anchor=north west, fill=bootc, text=white, font=\extfont\bfseries, minimum width=#6cm, minimum height=\extrowh cm] at (\extxb,0) {#4};
+    \node[extc, anchor=north west, fill=bootc, text=white, font=\extfont\bfseries, minimum width=#7cm, minimum height=\extrowh cm] at (\extxc,0) {Filename};
+    \foreach \a/\b/\c [count=\i] in {#8} {
+      \node[extc, anchor=north west, fill=rowc, font=\extfont, minimum width=#5cm, minimum height=\extrowh cm] (#1-n\i) at (0,-\extrowh*\i) {\a};
+      \node[extc, anchor=north west, fill=rowc, font=\extfont, minimum width=#6cm, minimum height=\extrowh cm] (#1-m\i) at (\extxb,-\extrowh*\i) {\b};
+      \node[extc, anchor=north west, fill=rowc, font=\extfont, minimum width=#7cm, minimum height=\extrowh cm] (#1-f\i) at (\extxc,-\extrowh*\i) {\c};
+      \xdef\extn{\i}
+    }
+    \draw[thick] (0,0) rectangle (\extxd,{-\extrowh*(\extn+1)});
+  \end{scope}}
+
 \section{ext2/3/4 in Action}
 \label{sec:ext}
 
@@ -11,18 +64,18 @@ The primary file system on Linux is \emph{ext4}, the fourth extended file system
   An ext2/3/4 file system is partitioned into \emph{block groups} with the same internal structure: a block bitmap, an inode bitmap, an inode table, and the file content of that group. The \emph{group descriptor table} (GDT), stored after the superblock, records for each group where its block bitmap, inode bitmap, and inode table start.
 \end{definition}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}[x=1cm]
-  \draw[fill=bootc] (0,0) rectangle (1.0,0.7); \node[font=\scriptsize, text=white, align=center] at (0.5,0.35) {Super-\\ block};
-  \draw[fill=datac] (1.0,0) rectangle (1.4,0.7);
-  \foreach \g in {0,...,3} { \draw[fill=freec] (1.4+1.6*\g,0) rectangle ++(1.6,0.7); \node[font=\scriptsize] at (2.2+1.6*\g,0.35) {Group \g}; }
-  \draw[fill=rowc] (3.0,1.4) rectangle (4.0,2.1); \node[font=\tiny, align=center] at (3.5,1.75) {block\\ bitmap};
-  \draw[fill=rowc] (4.0,1.4) rectangle (5.0,2.1); \node[font=\tiny, align=center] at (4.5,1.75) {inode\\ bitmap};
-  \draw[fill=metac] (5.0,1.4) rectangle (6.0,2.1); \node[font=\tiny, align=center] at (5.5,1.75) {inode\\ table};
-  \draw[fill=usedc] (6.0,1.4) rectangle (7.2,2.1); \node[font=\tiny, align=center] at (6.6,1.75) {file\\ content};
-  \draw[densely dotted] (3.0,1.4) -- (3.0,0.7); \draw[densely dotted] (7.2,1.4) -- (4.6,0.7);
-  \draw[arr] (0.4,1.5) node[above, font=\scriptsize] {group descriptor table} -- (1.2,0.7);
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \node[extc, fill=bootc, minimum width=1.74cm, minimum height=0.86cm, text=white, font=\scriptsize\bfseries, align=center] at (0,0) {Super-\\block};
+  \node[extc, fill=datac, minimum width=0.88cm, minimum height=0.86cm] at (1.74,0) {};
+  \foreach \g in {0,...,3}
+    \node[extc, fill=freec, minimum width=2.5cm, minimum height=0.86cm, font=\scriptsize] at (2.62+2.5*\g,0) {Group \g};
+  \foreach \x/\w/\c/\t in {3.36/1.5/rowc/Block\\bitmap, 4.86/1.4/rowc/Inode\\bitmap, 6.26/1.6/metac/Inode\\table, 7.86/1.64/usedc/File\\content}
+    \node[extc, fill=\c, minimum width=\w cm, minimum height=0.86cm, font=\scriptsize, align=center] at (\x,1.26) {\t};
+  \draw[densely dotted] (3.36,1.26) -- (5.12,0.86) (9.5,1.26) -- (7.62,0.86);
+  \node[font=\scriptsize, anchor=south east] at (1.75,1.45) {Group descriptor table};
+  \draw[arr] (1.6,1.45) -- (1.98,0.92);
 \end{tikzpicture}
 \caption{An ext2/3/4 file system: the superblock and the group descriptor table, then block groups that all share one internal structure (after slide 152).}
 \label{fig:blockgroups}
@@ -63,25 +116,34 @@ For simplicity, consider a single block group from now on (\Cref{fig:extlayout})
   \item The \emph{inode table} stores the contents of all the inodes of the group. Every inode has the same size, specified in the superblock, and the inodes are stored sequentially.
 \end{itemize}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}[x=1cm]
-  \draw[fill=bootc] (0,0) rectangle (1.0,0.7); \node[font=\scriptsize, text=white, align=center] at (0.5,0.35) {Super-\\ block};
-  \draw[fill=rowc] (1.0,0) rectangle (1.9,0.7); \node[font=\tiny, align=center] at (1.45,0.35) {block\\ bitmap};
-  \draw[fill=rowc] (1.9,0) rectangle (2.8,0.7); \node[font=\tiny, align=center] at (2.35,0.35) {inode\\ bitmap};
-  \draw[fill=metac] (2.8,0) rectangle (4.8,0.7); \node[font=\scriptsize] at (3.8,0.35) {Inode table};
-  \foreach \k [count=\j] in {2,1,1,0,1,0,0,1,1,1,0,2,0,1,1,0,0,1,1,0,1,1,0,0,1} {
-    \pgfmathsetmacro{\xx}{4.8+0.22*(\j-1)}
-    \ifnum\k=1 \draw[fill=usedc] (\xx,0) rectangle ++(0.22,0.7);
-    \else\ifnum\k=2 \draw[fill=dirc] (\xx,0) rectangle ++(0.22,0.7);
-    \else \draw[fill=freec] (\xx,0) rectangle ++(0.22,0.7); \fi\fi
-  }
-  \node[font=\scriptsize\ttfamily, anchor=south] at (2.35,0.75) {1110010\dots};
-  \foreach \i/\t in {0/1,1/2,2/3,3/\dots,4/100} \node[cell, fill=metac, minimum width=9mm] at (3.4+0.9*\i,-0.9) {\t};
-  \draw[densely dotted] (2.8,0) -- (2.95,-0.65); \draw[densely dotted] (4.8,0) -- (7.45,-0.65);
-  \foreach \i in {0,1,4} \draw[{Stealth[length=1.2mm]}-{Stealth[length=1.2mm]}] (2.95+0.9*\i,-1.3) -- node[below, font=\tiny] {128 B} (3.85+0.9*\i,-1.3);
+\begin{tikzpicture}[x=1cm, y=1cm]
+  % (a) one block group
+  \node[font=\small, anchor=east] at (-0.15,0.45) {(a)};
+  \begin{scope}[scale=1.55, transform shape]
+    \extstrip{L}
+    \node[extc, fill=rowc, minimum width=0.93cm, minimum height=0.45cm, font=\tiny, inner sep=1pt] (bm) at (1.88,1.0) {1110010\dots};
+    \foreach \t [count=\i from 0] in {1,2,3,\dots,100}
+      \node[extc, fill=metac, minimum width=0.4cm, minimum height=0.45cm, font=\tiny] at (3.13+0.4*\i,1.0) {\t};
+    \draw[densely dotted] (bm.south west) -- (L-ib.north west) (bm.south east) -- (L-ib.north east);
+    \draw[densely dotted] (3.13,1.0) -- (L-it.north west) (5.13,1.0) -- (L-it.north east);
+  \end{scope}
+  \node[font=\tiny, anchor=north east] at (L-d18.south east) {* For simplicity, we consider one block group only.};
+  % (b) the inode table
+  \begin{scope}[shift={(3.1,-1.3)}]
+    \node[font=\small, anchor=east] at (-0.3,-0.7) {(b)};
+    \node[font=\scriptsize\bfseries, anchor=south] at (2.5,0) {Inode table};
+    \foreach \t [count=\i from 0] in {1,2,3,\dots,100}
+      \node[extc, anchor=north west, fill=metac, minimum width=1cm, minimum height=0.6cm, font=\scriptsize] at (\i,0) {\t};
+    \foreach \i in {0,1,4} {
+      \draw (\i,-0.72) -- (\i,-1.0) (\i+1,-0.72) -- (\i+1,-1.0);
+      \draw[{Stealth[length=1.3mm]}-{Stealth[length=1.3mm]}] (\i,-0.86) -- (\i+1,-0.86);
+      \node[font=\scriptsize, align=center, anchor=north] at (\i+0.5,-0.88) {128\\bytes};
+    }
+  \end{scope}
 \end{tikzpicture}
-\caption{One block group: the bitmaps, and an inode table of fixed-size 128-byte inodes numbered from 1 (after slides 155--156).}
+\caption{(a) One block group: the bitmaps, the inode table, and the data blocks; (b) the inode table holds fixed-size 128-byte inodes numbered from 1 (after slides 155--156).}
 \label{fig:extlayout}
 \end{figure}
 
@@ -125,20 +187,33 @@ Inode 2 answers the question left open in \Cref{sec:fsmeta}: in ext2/3/4, the ro
 
 \subsection{Directory Entries}
 
-A directory is stored in data blocks, and it always contains at least two entries: \code{.} and \code{..}. Each directory entry has four fields: the inode number (4 bytes), the entry length (2 bytes), the name length (2 bytes), and the filename (up to 255 bytes).
+A directory is stored in data blocks, and it always contains at least two entries: \code{.} and \code{..}. Each directory entry has four fields (\Cref{fig:extdirent}): the inode number (4 bytes), the entry length (2 bytes), the name length (2 bytes), and the filename (up to 255 bytes).
 
-\begin{center}
-\small
-\begin{tabular}{rrrl}
-  \toprule
-  Inode \# & Entry length & Name length & Filename \\
-  \midrule
-  123 & 12 & 2 & \code{.} \\
-  2 & 12 & 3 & \code{..} \\
-  5\,086 & 16 & 7 & \code{12.jpg} \\
-  \bottomrule
-\end{tabular}
-\end{center}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \foreach \t [count=\i] in {Inode number (4 bytes), Entry length (2 bytes), Name length (2 bytes), File name (up to 255 bytes)}
+    \node[extc, anchor=north west, fill=rowc, minimum width=3.4cm, minimum height=0.5cm, font=\scriptsize] at (0,0.5-0.5*\i) {\t};
+  \foreach \x/\w/\t in {3.8/1.2/Inode \#, 5.0/1.25/Entry\\length, 6.25/1.25/Name\\length, 7.5/1.25/Filename}
+    \node[extc, anchor=north west, fill=bootc, text=white, font=\scriptsize\bfseries, align=center, minimum width=\w cm, minimum height=0.7cm] at (\x,0) {\t};
+  \foreach \a/\b/\c/\d [count=\i] in {123/12/2/\textbf{.}, 2/12/3/\textbf{..}, 5{,}086/16/7/\textbf{12.jpg}} {
+    \node[extc, anchor=north west, fill=rowc, minimum width=1.2cm, minimum height=0.45cm, font=\scriptsize] (n\i) at (3.8,-0.25-0.45*\i) {\a};
+    \node[extc, anchor=north west, fill=rowc, minimum width=1.25cm, minimum height=0.45cm, font=\scriptsize] (e\i) at (5.0,-0.25-0.45*\i) {\b};
+    \node[extc, anchor=north west, fill=rowc, minimum width=1.25cm, minimum height=0.45cm, font=\scriptsize] (l\i) at (6.25,-0.25-0.45*\i) {\c};
+    \node[extc, anchor=north west, fill=rowc, minimum width=1.25cm, minimum height=0.45cm, font=\scriptsize] (f\i) at (7.5,-0.25-0.45*\i) {\d};
+  }
+  \draw[thick] (3.8,0) rectangle (8.75,-2.05);
+  \node[font=\scriptsize, anchor=east, inner sep=1pt] (x1) at (5.3,-2.75) {4 + 2 + 2 +};
+  \node[draw, font=\scriptsize, inner sep=1pt, anchor=west] (x7) at ([xshift=1pt]x1.east) {7};
+  \node[font=\scriptsize, anchor=west, inner sep=1pt] (x15) at ([xshift=1pt]x7.east) {= 15?!};
+  \draw[-{Stealth[length=1.5mm]}, semithick] ([xshift=1.5mm]x15.north west) -- ([yshift=-0.5mm]e3.south);
+  \draw[-{Stealth[length=1.5mm]}, semithick] (x7.south) .. controls ++(0.1,-0.55) and ($(l3.south)+(0.05,-1.0)$) .. ([yshift=-0.5mm]l3.south);
+  \node[font=\scriptsize, anchor=west] at ($(l3.south)+(0.12,-0.6)$) {Don't forget `\textbackslash 0'.};
+  \node[draw=sigc, thick, font=\scriptsize, inner sep=3pt] at (6.0,-3.4) {Because of byte alignment.};
+\end{tikzpicture}
+\caption{The fields of a directory entry, and the directory entries of \code{/dir1} (after slide 158).}
+\label{fig:extdirent}
+\end{figure}
 
 Why is the entry of \code{12.jpg} 16 bytes long, not $4 + 2 + 2 + 7 = 15$? Two reasons. The name length counts the terminating \code{'\textbackslash 0'}, which is why the 6-character name \code{12.jpg} has length 7 and \code{.} has length 2. And entries are padded for byte alignment to a multiple of 4 bytes, so $15$ rounds up to $16$ (and $10$, for \code{.}, to $12$). Because the entry length is stored explicitly, an entry can also be \emph{longer} than its name requires; deletion uses that (below).
 
@@ -161,23 +236,60 @@ Why is the entry of \code{12.jpg} 16 bytes long, not $4 + 2 + 2 + 7 = 15$? Two r
   A new directory entry \code{my\_link} with inode number 5086 is added to \code{/} (\Cref{fig:hardlink}). Conceptually, this creates one file with two filenames. Deleting one of the two directory entries does not delete the file content.
 \end{example}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}
-  \dirtab{d}{0cm}{Directory: \code{/dir1}}{123/., 2/.., 5{,}086/12.jpg}
-  \dirtab{r}{5.2cm}{Directory: \code{/}}{2/., 2/.., 5{,}086/my\_link}
-  \node[cell, fill=usedc, minimum width=18mm, font=\scriptsize\bfseries] (ino) at (3.6,-2.6) {inode 5086};
-  \node[cell, fill=bootc, text=white, minimum width=18mm, below=0pt of ino, font=\tiny\bfseries] {link count $= 2$};
-  \draw[arr] (d-n3.south) |- (ino.west);
-  \draw[arr] (r-n3.south) |- (ino.east);
+\renewcommand{\extfont}{\scriptsize}\renewcommand{\extrowh}{0.45}
+\begin{tikzpicture}[x=1cm, y=1cm]
+  % (a) the new directory entry
+  \node[font=\small, anchor=east] at (-1.2,-0.9) {(a)};
+  \extdir{d}{(0,0)}{Directory: /dir1}{\dots}{1.4}{0.6}{1.5}{123/\dots/\textbf{.}, 2/\dots/\textbf{..}, 5{,}086/\dots/\textbf{12.jpg}}
+  \extdir{r}{(5.0,0)}{Directory: /}{\dots}{1.4}{0.6}{1.5}{2/\dots/\textbf{.}, 2/\dots/\textbf{..}, 5{,}086/\dots/\textbf{my\_link}}
+  \node[font=\scriptsize, anchor=west] (nt) at (8.0,0.95) {A new directory entry is created.};
+  \draw[sig, semithick] ([xshift=4mm]nt.south west) .. controls (10.3,0.2) and (10.2,-1.3) .. ([xshift=1pt]r-f3.east);
+  % (b) both entries refer to the same inode
+  \begin{scope}[yshift=-4.1cm]
+    \node[font=\small, anchor=east] at (-1.2,-0.9) {(b)};
+    \extdir{d2}{(0,0)}{Directory: /dir1}{\dots}{1.4}{0.6}{1.5}{123/\dots/\textbf{.}, 2/\dots/\textbf{..}, 5{,}086/\dots/\textbf{12.jpg}}
+    \extdir{r2}{(5.0,0)}{Directory: /}{\dots}{1.4}{0.6}{1.5}{2/\dots/\textbf{.}, 2/\dots/\textbf{..}, 5{,}086/\dots/\textbf{my\_link}}
+    \begin{scope}[shift={(3.5,0.55)}, scale=1.25, transform shape]
+      \extinode{h}{(0,0)}{5086}
+      \extblocks{h}
+    \end{scope}
+    \draw[arr, semithick] ([xshift=2mm]d2-n3.west) .. controls (-1.3,-1.6) and (-0.9,1.75) .. (h-h.west);
+    \draw[arr, semithick] ([xshift=1pt]r2-f3.east) .. controls (10.0,-1.6) and (10.0,1.85) .. (h-h.east);
+  \end{scope}
 \end{tikzpicture}
-\caption{After \code{ln /dir1/12.jpg /my\_link}, two directory entries in two directories refer to the same inode, whose link count is 2 (after slides 159--161).}
+\caption{(a) \code{ln /dir1/12.jpg /my\_link} creates a new directory entry in \code{/}; (b) both directory entries refer to the same inode, 5086 (after slides 159--160).}
 \label{fig:hardlink}
 \end{figure}
 
 \begin{keypoint}[Link Count]
-  The \emph{link count} field of the inode keeps track of how many directory entries point to the file. Removing a link with the \code{unlink()} system call (which is what \code{rm} calls) decrements it by 1. Only when the link count becomes 0 is the file content removed: its data blocks and its inode.
+  The \emph{link count} field of the inode keeps track of how many directory entries point to the file. Removing a link with the \code{unlink()} system call (which is what \code{rm} calls) decrements it by 1 (\Cref{fig:linkcount}). Only when the link count becomes 0 is the file content removed: its data blocks and its inode.
 \end{keypoint}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \foreach \xo/\n/\lc in {0/a/2, 8.2/b/0} {
+    \begin{scope}[xshift=\xo cm]
+      \node[extc, anchor=north west, fill=usedc, minimum width=2.7cm, minimum height=0.5cm, font=\scriptsize\bfseries] at (0,0) {5086};
+      \foreach \t [count=\i] in {Link count, \dots, Direct \#0, Direct \#1, Direct \#2} {
+        \node[extc, anchor=north west, fill=bootc, text=white, font=\scriptsize\bfseries, minimum width=2.0cm, minimum height=0.5cm] at (0,-0.5*\i) {\t};
+        \node[extc, anchor=north west, fill=extyel, font=\scriptsize\bfseries, minimum width=0.7cm, minimum height=0.5cm] (\n-v\i) at (2.0,-0.5*\i) {\ifnum\i=1 \lc\fi};
+      }
+      \draw[thick] (0,0) rectangle (2.7,-3.0);
+      \foreach \i/\y/\dy in {3/-1.04/0.07, 4/-1.82/0.02, 5/-2.61/-0.06} {
+        \node[draw, fill=datac, minimum size=0.68cm, inner sep=0pt, anchor=north west] (\n-b\i) at (3.0,\y) {};
+        \draw[extptr] ($(\n-v\i.center)+(0.1,-0.03)$) -- ($(\n-b\i.west |- \n-v\i.center)+(0,\dy)$);
+      }
+    \end{scope}
+  }
+  \node[fill=black, text=white, font=\scriptsize\ttfamily, align=left, anchor=north, inner sep=4pt] at (5.95,0) {\# rm /my\_link\\\# rm /dir1/12.jpg};
+  \node[draw=sigc, thick, font=\scriptsize, inner sep=4pt] at (5.95,-1.9) {File will be deleted.};
+\end{tikzpicture}
+\caption{Removing both links brings the link count of inode 5086 from 2 to 0, and the file is deleted (after slide 161).}
+\label{fig:linkcount}
+\end{figure}
 
 In \Cref{fig:hardlink}, \code{rm /my\_link} brings the link count of inode 5086 from 2 to 1 and leaves the file intact; a subsequent \code{rm /dir1/12.jpg} brings it to 0, and the file is deleted.
 
@@ -199,13 +311,16 @@ Device: 801h/2049d  Inode: 30669       Links: 1
 Device: 804h/2052d  Inode: 10994310    Links: 2
 \end{lstlisting}
 
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tikzpicture}
-  \dirtab{p}{0cm}{Parent of \code{temp}}{123/., 2/.., 10{,}994{,}310/temp}
-  \dirtab{q}{5.6cm}{The new directory \code{temp}}{10{,}994{,}310/., 123/..}
-  \draw[arr, densely dashed] (p-f3.east) to[out=0, in=180] node[below right, font=\scriptsize] {link} (q-n1.west);
-  \draw[arr, densely dashed] (q-f1.east) to[out=0, in=0, looseness=2] node[right, font=\scriptsize] {link} (q-f1.south east);
+\renewcommand{\extfont}{\scriptsize}\renewcommand{\extrowh}{0.45}
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \extdir{p}{(0,0)}{Parent of ``temp''}{\dots}{1.7}{0.6}{1.5}{123/\dots/\textbf{.}, 2/\dots/\textbf{..}, 10{,}994{,}310/\dots/\textbf{temp}}
+  \extdir{q}{(5.4,0)}{The new directory ``temp''}{\dots}{1.7}{0.6}{1.5}{10{,}994{,}310/\dots/\textbf{.}, 123/\dots/\textbf{..}}
+  \draw[extdot] ([xshift=-1mm]p-f3.east) .. controls (4.6,-1.6) and (3.9,-0.7) .. ([xshift=-1.5mm]q-n1.west);
+  \node[font=\scriptsize, anchor=west] at (4.45,-1.2) {link};
+  \draw[extdot] ($(q-f1.center)+(0.3,0)$) to[out=0, in=90] (9.6,-1.15) to[out=-90, in=-90, looseness=1.3] ([yshift=-0.6mm]q-f2.south);
+  \node[font=\scriptsize, anchor=west] at (9.75,-1.15) {link};
 \end{tikzpicture}
 \caption{A new directory has two links: its entry in the parent, and its own entry \code{.}; its \code{..} adds a link to the parent (after slide 164).}
 \label{fig:dirlinks}
@@ -238,13 +353,95 @@ Removing an (empty) directory with \code{rmdir()} is therefore as simple as remo
 # ls -l /my_link
 /my_link -> /dir1/12.jpg
 \end{lstlisting}
-The new entry \code{my\_link} in \code{/} now has its own inode, 6120, rather than 5086. Since it stores a path and not an inode number, a symbolic link can cross file systems and can point to a directory, but it dangles if the target is removed.
+The new entry \code{my\_link} in \code{/} now has its own inode, 6120, rather than 5086 (\Cref{fig:symlink}). Since it stores a path and not an inode number, a symbolic link can cross file systems and can point to a directory, but it dangles if the target is removed.
+
+\begin{figure}[H]
+\centering
+\renewcommand{\extfont}{\scriptsize}\renewcommand{\extrowh}{0.45}
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \extdir{d}{(0,0)}{Directory: /dir1}{\dots}{1.4}{0.6}{1.5}{123/\dots/\textbf{.}, 2/\dots/\textbf{..}, 5{,}086/\dots/\textbf{12.jpg}}
+  \extdir{r}{(5.0,0)}{Directory: /}{\dots}{1.4}{0.6}{1.5}{2/\dots/\textbf{.}, 2/\dots/\textbf{..}, 6{,}120/\dots/\textbf{my\_link}}
+  \node[font=\scriptsize, anchor=west] (nt) at (8.0,0.95) {A new directory entry is created.};
+  \draw[sig, semithick] ([xshift=4mm]nt.south west) .. controls (10.3,0.2) and (10.2,-1.3) .. ([xshift=1pt]r-f3.east);
+\end{tikzpicture}
+\caption{After \code{ln -s /dir1/12.jpg /my\_link}, the new entry \code{my\_link} refers to a new inode, 6120 (after slide 166).}
+\label{fig:symlink}
+\end{figure}
 
 Where is the target path stored? It depends on its length. A path shorter than 60 characters is stored right inside the inode, in the space of the 12 direct and 3 indirect block pointers: $(12 + 3) \times 4 = 60$ bytes. A longer path gets a data block of its own.
 
 \subsection{Creating a File}
 
-Creating \code{/dir1/hello.txt} takes six steps.
+Creating \code{/dir1/hello.txt} takes six steps (\Cref{fig:create}).
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  % (a) step 1: an unallocated inode
+  \begin{scope}
+    \node[font=\small, anchor=east] at (-0.1,0.29) {(a)};
+    \extstrip{A}
+    \extinode{ia}{(1.5,1.2)}{Inode \#1024}
+    \draw[extdot] (2.0,1.17) -- (2.15,0.62);
+    \draw[extdot] (2.2,1.17) -- (4.25,0.62);
+  \end{scope}
+  % (b) step 2: unallocated data blocks
+  \begin{scope}[xshift=8.5cm]
+    \node[font=\small, anchor=east] at (-0.1,0.29) {(b)};
+    \extstrip{B}
+    \extinode{ib}{(1.5,1.2)}{Inode \#1024}
+    \extblocks{ib}
+    \draw[extdot] (2.05,1.17) -- (1.6,0.62);
+    \draw[extdot] (ib-b1.east) to[out=0, in=90] ([yshift=0.5mm]B-d6.north);
+    \draw[extdot] (ib-b2.east) to[out=0, in=90] ([yshift=0.5mm]B-d2.north);
+    \draw[extdot] (ib-b3.east) to[out=0, in=90] ([yshift=0.5mm]B-d1.north);
+  \end{scope}
+  % (c) step 3: the root inode
+  \begin{scope}[yshift=-3.3cm]
+    \node[font=\small, anchor=east] at (-0.1,0.29) {(c)};
+    \extstrip{C}
+    \extinode{ic}{(1.6,1.24)}{Inode \#2}
+    \extblocks{ic}
+    \draw[extdot] (2.2,1.2) -- (3.0,0.62);
+  \end{scope}
+  % (d) step 4: the entries of /
+  \begin{scope}[xshift=8.5cm, yshift=-3.3cm]
+    \node[font=\small, anchor=east] at (-0.1,0.29) {(d)};
+    \extstrip{D}
+    \draw[fill=freec] (3.08,1.62) ellipse (0.24 and 0.56);
+    \extinode{id}{(1.6,1.24)}{Inode \#2}
+    \extblocks{id}
+    \node[extarr] at (3.45,1.63) {};
+    \draw[extdot] (2.2,1.2) -- (3.0,0.62);
+    \extdir{td}{(4.13,2.29)}{Directory: /}{Length}{0.82}{0.82}{1.15}{2/12/\textbf{.}, 2/12/\textbf{..}, 123/12/\textbf{dir1}}
+  \end{scope}
+  % (e) step 5: the entries of /dir1
+  \begin{scope}[yshift=-6.6cm]
+    \node[font=\small, anchor=east] at (-0.1,0.29) {(e)};
+    \extstrip{E}
+    \draw[fill=freec] (3.08,1.62) ellipse (0.24 and 0.56);
+    \extinode{ie}{(1.6,1.24)}{Inode \#123}
+    \extblocks{ie}
+    \node[extarr] at (3.45,1.63) {};
+    \draw[extdot] (2.2,1.2) -- (3.7,0.62);
+    \extdir{te}{(4.13,2.61)}{Directory: /dir1}{Length}{0.82}{0.82}{1.15}{123/12/\textbf{.}, 2/12/\textbf{..}, 456/16/panic.c, 894/20/picture.jpg}
+  \end{scope}
+  % (f) step 6: the new entry
+  \begin{scope}[xshift=8.5cm, yshift=-6.6cm]
+    \node[font=\small, anchor=east] at (-0.1,0.29) {(f)};
+    \extstrip{F}
+    \draw[fill=freec] (3.08,1.62) ellipse (0.24 and 0.56);
+    \extinode{if}{(1.6,1.24)}{Inode \#123}
+    \extblocks{if}
+    \node[extarr] at (3.45,1.63) {};
+    \draw[extdot] (2.2,1.2) -- (3.7,0.62);
+    \extdir{tf}{(4.13,2.61)}{Directory: /dir1}{Length}{0.82}{0.82}{1.15}{123/12/\textbf{.}, 2/12/\textbf{..}, 456/16/panic.c, 894/20/picture.jpg, 1024/20/hello.txt}
+  \end{scope}
+\end{tikzpicture}
+\caption{Creating \code{/dir1/hello.txt}: (a)--(f) are steps 1--6 (after slides 168--173).}
+\label{fig:create}
+\end{figure}
+
 \begin{enumerate}
   \item Use a linear search in the inode bitmap to find an unallocated inode for the new file: inode 1024.
   \item Use a linear search in the block bitmap to find unallocated data blocks for it.
@@ -254,9 +451,10 @@ Creating \code{/dir1/hello.txt} takes six steps.
   \item Add a new directory entry \code{hello.txt} with inode 1024 to \code{/dir1}.
 \end{enumerate}
 
+
 \subsection{Deleting a File}
 
-Deleting \code{/dir1/picture.jpg}:
+Deleting \code{/dir1/picture.jpg} (\Cref{fig:delete}):
 \begin{enumerate}
   \item Read the inode and the data blocks of \code{/dir1}, and locate the inode of \code{picture.jpg}: 894.
   \item Read inode 894 and decrement its link count. It becomes 0.
@@ -264,21 +462,54 @@ Deleting \code{/dir1/picture.jpg}:
   \item Change the entry length of the directory entry \emph{before} \code{picture.jpg}: the new length of \code{panic.c} is its original length plus that of \code{picture.jpg}, $16 + 20 = 36$.
 \end{enumerate}
 
-\begin{center}
-\small
-\begin{tabular}{rrl@{\qquad}rrl}
-  \toprule
-  \multicolumn{3}{c}{Before} & \multicolumn{3}{c}{After} \\
-  Inode \# & Length & Filename & Inode \# & Length & Filename \\
-  \midrule
-  123 & 12 & \code{.} & 123 & 12 & \code{.} \\
-  2 & 12 & \code{..} & 2 & 12 & \code{..} \\
-  456 & 16 & \code{panic.c} & 456 & \textcolor{sigc}{36} & \code{panic.c} \\
-  894 & 20 & \code{picture.jpg} & \textcolor{cmt}{894} & \textcolor{cmt}{20} & \textcolor{cmt}{\code{picture.jpg}} \\
-  1024 & 20 & \code{hello.txt} & 1024 & 20 & \code{hello.txt} \\
-  \bottomrule
-\end{tabular}
-\end{center}
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  % (a) step 1: the entries of /dir1
+  \begin{scope}
+    \node[font=\small, anchor=east] at (-0.1,0.29) {(a)};
+    \extstrip{A}
+    \draw[fill=freec] (3.08,1.62) ellipse (0.24 and 0.56);
+    \extinode{ia}{(1.6,1.24)}{Inode \#123}
+    \extblocks{ia}
+    \node[extarr] at (3.45,1.63) {};
+    \draw[extdot] (2.2,1.2) -- (3.7,0.62);
+    \extdir{ta}{(4.13,2.61)}{Directory: /dir1}{Length}{0.82}{0.82}{1.15}{123/12/\textbf{.}, 2/12/\textbf{..}, 456/16/panic.c, 894/20/picture.jpg, 1024/20/hello.txt}
+  \end{scope}
+  % (b) step 2: inode 894
+  \begin{scope}[xshift=8.5cm]
+    \node[font=\small, anchor=east] at (-0.1,0.29) {(b)};
+    \extstrip{B}
+    \extinode{ib}{(1.6,1.24)}{Inode \#894}
+    \extblocks{ib}
+    \extdir{tb}{(4.13,2.61)}{Directory: /dir1}{Length}{0.82}{0.82}{1.15}{123/12/\textbf{.}, 2/12/\textbf{..}, 456/16/panic.c, 894/20/picture.jpg, 1024/20/hello.txt}
+    \draw[extdot] (2.7,2.3) .. controls (3.1,2.7) and (3.6,2.5) .. (3.68,1.85) .. controls (3.72,1.45) and (3.85,1.35) .. ([xshift=-0.3mm]tb-n4.west);
+  \end{scope}
+  % (c) step 3: clear the bits
+  \begin{scope}[yshift=-3.3cm]
+    \node[font=\small, anchor=east] at (-0.1,0.29) {(c)};
+    \extstrip{C}
+    \extinode{ic}{(1.6,1.24)}{Inode \#894}
+    \extblocks{ic}
+    \draw[extdot] (1.95,1.2) -- (1.55,0.62);
+    \draw[extdot] (2.24,1.2) -- (2.65,0.62);
+    \extdir{tc}{(4.13,2.61)}{Directory: /dir1}{Length}{0.82}{0.82}{1.15}{123/12/\textbf{.}, 2/12/\textbf{..}, 456/16/panic.c, 894/20/picture.jpg, 1024/20/hello.txt}
+  \end{scope}
+  % (d) step 4: the entry before picture.jpg absorbs it
+  \begin{scope}[xshift=8.5cm, yshift=-3.3cm]
+    \node[font=\small, anchor=east] at (-0.1,0.29) {(d)};
+    \extstrip{D}
+    \extdir{td}{(4.13,2.61)}{Directory: /dir1}{Length}{0.82}{0.82}{1.15}{123/12/\textbf{.}, 2/12/\textbf{..}, 456/\textbf{36}/panic.c, 894/20/picture.jpg, 1024/20/hello.txt}
+    \draw[sigc, thick] ($(td-m3.center)+(-0.17,-0.11)$) rectangle ($(td-m3.center)+(0.17,0.11)$);
+    \node[draw=sigc, thick, rounded corners=2pt, fill=white, font=\tiny\ttfamily, align=left, anchor=east, inner sep=3pt] (co) at (3.75,1.63)
+      {new length of ``panic.c''\\= original length of ``panic.c'' +\\\phantom{= }original length of ``picture.jpg''\\= 16 + 20\\= 36.};
+    \draw[sigc, thick, fill=white] ([yshift=1mm]co.east) -- ([xshift=-0.4mm]td-n3.west) -- ([yshift=-1mm]co.east);
+    \draw[white, line width=1.2pt] ([xshift=-0.3mm, yshift=0.8mm]co.east) -- ([xshift=-0.3mm, yshift=-0.8mm]co.east);
+  \end{scope}
+\end{tikzpicture}
+\caption{Deleting \code{/dir1/picture.jpg}: (a)--(d) are steps 1--4 (after slides 174--177).}
+\label{fig:delete}
+\end{figure}
 
 The change of the entry length makes a traversal of the directory jump from \code{panic.c} straight to \code{hello.txt}, skipping the deleted entry. This leaves holes among the directory entries, so when a new file is created in the directory, the FS should check whether some hole is large enough for the new entry.
 
